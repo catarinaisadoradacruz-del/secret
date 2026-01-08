@@ -190,14 +190,13 @@ export default function UsersManagementPage() {
                   <button
                     onClick={() => openEditModal(user)}
                     className="inline-flex items-center gap-1 text-blue-500 hover:text-blue-600 mr-4"
-                    disabled={user.id === currentUserId}
                   >
                     <Edit2 className="h-4 w-4" />
                     Editar
                   </button>
                   <button
                     onClick={() => handleDelete(user.id)}
-                    className="inline-flex items-center gap-1 text-destructive hover:text-destructive/80"
+                    className="inline-flex items-center gap-1 text-destructive hover:text-destructive/80 disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={user.id === currentUserId}
                   >
                     <Trash2 className="h-4 w-4" />
