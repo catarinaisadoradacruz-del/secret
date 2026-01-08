@@ -296,7 +296,7 @@ export default function ForensicImagesPage() {
   }
 
   // Get all unique tags for filter
-  const allTags = [...new Set(images.flatMap(img => img.tags || []))]
+  const allTags = Array.from(new Set(images.flatMap(img => img.tags || [])))
 
   // Filter images
   const filteredImages = images.filter(img => {
