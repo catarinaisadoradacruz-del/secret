@@ -1,99 +1,236 @@
 "use client"
 
-import { useState, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { supabase } from '@/lib/supabase/client'
 import {
   Brain,
   FileText,
-  Users,
-  FileOutput,
-  Upload,
   Send,
   Copy,
   Check,
   Loader2,
-  RefreshCw,
-  Download,
+  Plus,
+  Trash2,
+  MessageSquare,
   X,
-  ChevronDown
+  ChevronDown,
+  Download,
+  FileOutput,
+  Clock,
+  Settings,
+  Eye,
+  Edit3,
+  Save
 } from 'lucide-react'
 
-type TabType = 'rai' | 'relato' | 'alvos' | 'documentos'
+interface ChatMessage {
+  id?: string
+  role: 'user' | 'assistant'
+  content: string
+  tipo_acao?: string
+  created_at?: string
+}
 
-interface Alvo {
+interface ChatSession {
+  id: string
+  titulo: string
   tipo: string
-  nome: string
-  cpf: string
-  data_nascimento: string
-  mae: string
-  endereco: string
-  telefone: string
+  documento_em_construcao?: any
+  status: string
+  created_at: string
+  updated_at: string
+  investigation_id?: string
+  investigations?: { titulo: string }
 }
 
-interface RAIAnalise {
-  numero_rai: string
-  data_fato: string
-  local_fato: string
-  tipificacao: string
-  pessoas: Alvo[]
-  objetos_apreendidos: string[]
-  diligencias_sugeridas: string[]
-  observacoes: string
-}
+const tiposDocumento = [
+  { id: 'general', nome: 'Assistente Geral' },
+  { id: 'RELINT', nome: 'RELINT - Relatorio de Inteligencia' },
+  { id: 'LEVANTAMENTO', nome: 'Levantamento de Enderecos' },
+  { id: 'REP_INTERCEPTACAO', nome: 'Representacao - Interceptacao' },
+  { id: 'REP_BA', nome: 'Representacao - Busca e Apreensao' },
+  { id: 'REP_PREVENTIVA', nome: 'Representacao - Prisao Preventiva' },
+  { id: 'RELATORIO', nome: 'Relatorio de Investigacao' },
+  { id: 'RELATO_PC', nome: 'Relato PC' },
+]
+
+const unidades = [
+  { id: 'DIH', nome: 'DIH - Homicidios' },
+  { id: '4DP', nome: '4a DP Goiania' },
+  { id: 'CENTRAL_FLAGRANTES', nome: 'Central de Flagrantes' },
+  { id: 'ABADIA_DE_GOIAS', nome: 'Subdelegacia de Abadia de Goias' },
+]
 
 export default function AssistentePage() {
-  const [activeTab, setActiveTab] = useState<TabType>('rai')
+  // Estados principais
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [currentSession, setCurrentSession] = useState<ChatSession | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [inputMessage, setInputMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [loadingSessions, setLoadingSessions] = useState(true)
   const [copied, setCopied] = useState(false)
-  const [result, setResult] = useState('')
-  const [raiAnalise, setRaiAnalise] = useState<RAIAnalise | null>(null)
   const [error, setError] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Estados dos formulários
-  const [raiText, setRaiText] = useState('')
-  const [relatoText, setRelatoText] = useState('')
-  const [relatoMenor, setRelatoMenor] = useState(false)
-  const [relatoDomestica, setRelatoDomestica] = useState(false)
-  const [docTipo, setDocTipo] = useState('RELINT')
-  const [docUnidade, setDocUnidade] = useState('ABADIA_DE_GOIAS')
-  const [docDados, setDocDados] = useState('')
-  const [analise5w2h, setAnalise5w2h] = useState('')
+  // Estados do documento em construcao
+  const [documentoAtual, setDocumentoAtual] = useState('')
+  const [showDocPreview, setShowDocPreview] = useState(false)
+  const [editingDoc, setEditingDoc] = useState(false)
 
-  const tabs = [
-    { id: 'rai' as TabType, label: 'Análise RAI', icon: FileText },
-    { id: 'relato' as TabType, label: 'Relato PC', icon: FileOutput },
-    { id: 'alvos' as TabType, label: 'Gestão Alvos', icon: Users },
-    { id: 'documentos' as TabType, label: 'Gerar Docs', icon: FileOutput },
-  ]
+  // Estados de configuracao
+  const [tipoDocumento, setTipoDocumento] = useState('general')
+  const [unidadeSelecionada, setUnidadeSelecionada] = useState('DIH')
+  const [showConfig, setShowConfig] = useState(false)
+  const [showSidebar, setShowSidebar] = useState(true)
 
-  const unidades = [
-    { id: 'ABADIA_DE_GOIAS', nome: 'Subdelegacia de Abadia de Goiás' },
-    { id: 'DIH', nome: 'DIH - Homicídios' },
-    { id: '4DP_GOIANIA', nome: '4ª DP Goiânia' },
-    { id: 'CENTRAL_FLAGRANTES', nome: 'Central de Flagrantes' },
-  ]
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  const tiposDocumento = [
-    { id: 'RELINT', nome: 'RELINT - Relatório de Inteligência' },
-    { id: 'LEVANTAMENTO', nome: 'Levantamento de Endereços' },
-    { id: 'REP_INTERCEPTACAO', nome: 'Representação - Interceptação Telefônica' },
-    { id: 'REP_BA', nome: 'Representação - Busca e Apreensão' },
-    { id: 'REP_PREVENTIVA', nome: 'Representação - Prisão Preventiva' },
-    { id: 'RELATORIO', nome: 'Relatório de Investigação' },
-    { id: 'OFICIO', nome: 'Ofício' },
-  ]
+  // Carregar sessoes ao iniciar
+  useEffect(() => {
+    loadSessions()
+  }, [])
 
-  const callGemini = async (prompt: string, type: string, context?: any) => {
-    setLoading(true)
-    setError('')
-    setResult('')
-    setRaiAnalise(null)
+  // Auto-scroll para ultima mensagem
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const loadSessions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('chat_sessions')
+        .select('*, investigations(titulo)')
+        .order('updated_at', { ascending: false })
+        .limit(50)
+
+      if (error) {
+        if (error.code === '42P01') {
+          // Tabela nao existe ainda
+          setSessions([])
+        } else {
+          throw error
+        }
+      } else {
+        setSessions(data || [])
+      }
+    } catch (err: any) {
+      console.error('Erro ao carregar sessoes:', err)
+    } finally {
+      setLoadingSessions(false)
+    }
+  }
+
+  const createNewSession = async () => {
+    try {
+      const titulo = tipoDocumento === 'general'
+        ? 'Nova Conversa'
+        : `${tiposDocumento.find(t => t.id === tipoDocumento)?.nome || tipoDocumento}`
+
+      const { data, error } = await supabase
+        .from('chat_sessions')
+        .insert({
+          titulo,
+          tipo: tipoDocumento,
+          status: 'ativo'
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setSessions(prev => [data, ...prev])
+      setCurrentSession(data)
+      setMessages([])
+      setDocumentoAtual('')
+    } catch (err: any) {
+      setError(err.message)
+    }
+  }
+
+  const loadSession = async (session: ChatSession) => {
+    setCurrentSession(session)
+    setTipoDocumento(session.tipo || 'general')
+    setDocumentoAtual(session.documento_em_construcao?.conteudo || '')
 
     try {
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('session_id', session.id)
+        .order('created_at', { ascending: true })
+
+      if (error) throw error
+      setMessages(data || [])
+    } catch (err: any) {
+      console.error('Erro ao carregar mensagens:', err)
+    }
+  }
+
+  const deleteSession = async (sessionId: string) => {
+    if (!confirm('Excluir esta conversa?')) return
+
+    try {
+      const { error } = await supabase
+        .from('chat_sessions')
+        .delete()
+        .eq('id', sessionId)
+
+      if (error) throw error
+
+      setSessions(prev => prev.filter(s => s.id !== sessionId))
+      if (currentSession?.id === sessionId) {
+        setCurrentSession(null)
+        setMessages([])
+      }
+    } catch (err: any) {
+      setError(err.message)
+    }
+  }
+
+  const sendMessage = async () => {
+    if (!inputMessage.trim() || loading) return
+
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: inputMessage,
+      created_at: new Date().toISOString()
+    }
+
+    setMessages(prev => [...prev, userMessage])
+    setInputMessage('')
+    setLoading(true)
+    setError('')
+
+    try {
+      // Determinar o tipo de acao
+      let actionType = 'general'
+      if (tipoDocumento === 'RELATO_PC') actionType = 'relato_pc'
+      else if (tipoDocumento === 'RELINT') actionType = 'gerar_documento'
+      else if (tipoDocumento.startsWith('REP_')) actionType = 'gerar_documento'
+      else if (tipoDocumento === 'LEVANTAMENTO') actionType = 'gerar_documento'
+      else if (inputMessage.toLowerCase().includes('5w2h')) actionType = '5w2h'
+      else if (inputMessage.toLowerCase().includes('rai')) actionType = 'analisar_rai'
+
+      // Se estamos construindo um documento, usar continue_document
+      if (documentoAtual && tipoDocumento !== 'general') {
+        actionType = 'continue_document'
+      }
+
       const response = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, type, context })
+        body: JSON.stringify({
+          prompt: inputMessage,
+          type: actionType,
+          sessionId: currentSession?.id,
+          context: {
+            tipo: tipoDocumento,
+            unidade: unidadeSelecionada,
+            documentoAtual
+          },
+          history: messages.slice(-10) // Ultimas 10 mensagens para contexto
+        })
       })
 
       const data = await response.json()
@@ -102,21 +239,29 @@ export default function AssistentePage() {
         throw new Error(data.error || 'Erro ao processar')
       }
 
-      // Se for análise de RAI, tentar parsear JSON
-      if (type === 'analisar_rai') {
-        try {
-          // Extrair JSON da resposta
-          const jsonMatch = data.response.match(/\{[\s\S]*\}/)
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0])
-            setRaiAnalise(parsed)
-          }
-        } catch (e) {
-          // Se não conseguir parsear, mostrar texto
-          setResult(data.response)
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: data.response,
+        tipo_acao: actionType,
+        created_at: new Date().toISOString()
+      }
+
+      setMessages(prev => [...prev, assistantMessage])
+
+      // Se for documento, atualizar preview
+      if (tipoDocumento !== 'general' && actionType !== 'analisar_rai') {
+        setDocumentoAtual(data.response)
+
+        // Salvar documento na sessao
+        if (currentSession) {
+          await supabase
+            .from('chat_sessions')
+            .update({
+              documento_em_construcao: { conteudo: data.response },
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', currentSession.id)
         }
-      } else {
-        setResult(data.response)
       }
     } catch (err: any) {
       setError(err.message)
@@ -125,502 +270,387 @@ export default function AssistentePage() {
     }
   }
 
-  const handleAnalisarRAI = () => {
-    if (!raiText.trim()) {
-      setError('Cole o texto do RAI para analisar')
-      return
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
     }
-    callGemini(raiText, 'analisar_rai')
   }
 
-  const handleGerarRelato = () => {
-    if (!relatoText.trim()) {
-      setError('Descreva o fato ocorrido')
-      return
-    }
-    let prompt = relatoText
-    if (relatoMenor) prompt += '\n\nOBS: Vítima é MENOR DE IDADE (aplicar ECA)'
-    if (relatoDomestica) prompt += '\n\nOBS: Caso de VIOLÊNCIA DOMÉSTICA (aplicar Maria da Penha)'
-    callGemini(prompt, 'relato_pc')
-  }
-
-  const handleAplicar5W2H = () => {
-    if (!analise5w2h.trim()) {
-      setError('Descreva o caso para análise 5W2H')
-      return
-    }
-    callGemini(analise5w2h, '5w2h')
-  }
-
-  const handleGerarDocumento = () => {
-    if (!docDados.trim()) {
-      setError('Forneça os dados para o documento')
-      return
-    }
-    callGemini(docDados, 'gerar_documento', { tipo: docTipo, unidade: docUnidade })
-  }
-
-  const handleCopy = () => {
-    const textToCopy = raiAnalise ? JSON.stringify(raiAnalise, null, 2) : result
-    navigator.clipboard.writeText(textToCopy)
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const downloadDocument = (format: 'txt' | 'html') => {
+    const content = documentoAtual
+    const filename = `${tipoDocumento}_${new Date().toISOString().split('T')[0]}`
 
-    if (file.type === 'application/pdf') {
-      setError('Upload de PDF em desenvolvimento. Por favor, cole o texto do RAI.')
-      return
+    if (format === 'txt') {
+      const blob = new Blob([content], { type: 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${filename}.txt`
+      a.click()
+      URL.revokeObjectURL(url)
+    } else {
+      // HTML com formatacao basica
+      const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${tipoDocumento}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; }
+    pre { white-space: pre-wrap; font-family: inherit; }
+  </style>
+</head>
+<body>
+  <pre>${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+</body>
+</html>`
+      const blob = new Blob([htmlContent], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${filename}.html`
+      a.click()
+      URL.revokeObjectURL(url)
     }
-
-    // Ler arquivo de texto
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      const text = event.target?.result as string
-      setRaiText(text)
-    }
-    reader.readAsText(file)
   }
 
-  const limpar = () => {
-    setResult('')
-    setRaiAnalise(null)
-    setError('')
-    setRaiText('')
-    setRelatoText('')
-    setDocDados('')
-    setAnalise5w2h('')
+  const saveDocument = async () => {
+    if (!documentoAtual || !currentSession) return
+
+    try {
+      // Salvar como documento
+      const { error } = await supabase.from('documentos').insert({
+        tipo: tipoDocumento,
+        titulo: `${tipoDocumento} - ${new Date().toLocaleDateString('pt-BR')}`,
+        conteudo: documentoAtual,
+        unidade: unidadeSelecionada,
+        status: 'rascunho'
+      })
+
+      if (error) throw error
+      alert('Documento salvo com sucesso!')
+    } catch (err: any) {
+      setError(err.message)
+    }
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center">
-              <Brain className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Assistente IA</h1>
-              <p className="text-muted-foreground">Sistema Investigativo PCGO</p>
-            </div>
-          </div>
-        </div>
-        <button
-          onClick={limpar}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary text-foreground hover:bg-secondary/80 transition-colors"
-        >
-          <RefreshCw className="h-4 w-4" />
-          Limpar
-        </button>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-2 p-1 bg-secondary/50 rounded-xl">
-        {tabs.map((tab) => {
-          const Icon = tab.icon
-          return (
+    <div className="flex h-[calc(100vh-120px)]">
+      {/* Sidebar de Sessoes */}
+      {showSidebar && (
+        <div className="w-72 border-r border-border flex flex-col bg-card">
+          <div className="p-4 border-b border-border">
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all ${
-                activeTab === tab.id
-                  ? 'bg-primary text-primary-foreground shadow-lg'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-              }`}
+              onClick={createNewSession}
+              className="w-full btn-primary flex items-center justify-center gap-2"
             >
-              <Icon className="h-4 w-4" />
-              <span className="hidden sm:inline">{tab.label}</span>
+              <Plus className="h-4 w-4" />
+              Nova Conversa
             </button>
-          )
-        })}
-      </div>
+          </div>
 
-      {/* Error Display */}
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError('')}>
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex-1 overflow-y-auto">
+            {loadingSessions ? (
+              <div className="flex justify-center p-4">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="p-4 text-center text-muted-foreground text-sm">
+                Nenhuma conversa ainda
+              </div>
+            ) : (
+              <div className="space-y-1 p-2">
+                {sessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className={`group flex items-center gap-2 p-3 rounded-lg cursor-pointer transition-colors ${
+                      currentSession?.id === session.id
+                        ? 'bg-primary/20 text-primary'
+                        : 'hover:bg-secondary text-foreground'
+                    }`}
+                    onClick={() => loadSession(session)}
+                  >
+                    <MessageSquare className="h-4 w-4 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{session.titulo}</p>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {new Date(session.updated_at).toLocaleDateString('pt-BR')}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteSession(session.id)
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/20 text-red-400"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Painel de Entrada */}
-        <div className="card p-6">
-          <h2 className="text-lg font-semibold mb-4 text-foreground">
-            {activeTab === 'rai' && 'Análise de RAI'}
-            {activeTab === 'relato' && 'Elaborar Relato PC'}
-            {activeTab === 'alvos' && 'Gestão de Alvos - 5W2H'}
-            {activeTab === 'documentos' && 'Gerar Documento'}
-          </h2>
-
-          {/* TAB: Análise RAI */}
-          {activeTab === 'rai' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Texto do RAI
-                </label>
-                <textarea
-                  value={raiText}
-                  onChange={(e) => setRaiText(e.target.value)}
-                  placeholder="Cole aqui o texto completo do RAI para análise..."
-                  className="input-field min-h-[300px] font-mono text-sm"
-                />
+      {/* Area Principal */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="p-4 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowSidebar(!showSidebar)}
+              className="p-2 rounded-lg hover:bg-secondary"
+            >
+              <MessageSquare className="h-5 w-5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center">
+                <Brain className="h-5 w-5 text-white" />
               </div>
-              <div className="flex gap-2">
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileUpload}
-                  accept=".txt,.pdf"
-                  className="hidden"
-                />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary text-foreground hover:bg-secondary/80"
-                >
-                  <Upload className="h-4 w-4" />
-                  Upload
-                </button>
-                <button
-                  onClick={handleAnalisarRAI}
-                  disabled={loading || !raiText.trim()}
-                  className="flex-1 btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  Analisar RAI
-                </button>
+              <div>
+                <h1 className="font-semibold text-foreground">
+                  {currentSession?.titulo || 'Assistente PCGO'}
+                </h1>
+                <p className="text-xs text-muted-foreground">
+                  {tiposDocumento.find(t => t.id === tipoDocumento)?.nome || 'Assistente Geral'}
+                </p>
               </div>
             </div>
-          )}
+          </div>
 
-          {/* TAB: Relato PC */}
-          {activeTab === 'relato' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Descrição do Fato
-                </label>
-                <textarea
-                  value={relatoText}
-                  onChange={(e) => setRelatoText(e.target.value)}
-                  placeholder="Descreva o fato ocorrido com todos os detalhes relevantes (data, hora, local, envolvidos, circunstâncias)..."
-                  className="input-field min-h-[200px]"
-                />
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relatoMenor}
-                    onChange={(e) => setRelatoMenor(e.target.checked)}
-                    className="w-4 h-4 rounded border-border"
-                  />
-                  <span className="text-sm text-foreground">Vítima menor de idade</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relatoDomestica}
-                    onChange={(e) => setRelatoDomestica(e.target.checked)}
-                    className="w-4 h-4 rounded border-border"
-                  />
-                  <span className="text-sm text-foreground">Violência doméstica</span>
-                </label>
-              </div>
-              <button
-                onClick={handleGerarRelato}
-                disabled={loading || !relatoText.trim()}
-                className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
+          <div className="flex items-center gap-2">
+            {/* Seletor de tipo */}
+            <div className="relative">
+              <select
+                value={tipoDocumento}
+                onChange={(e) => setTipoDocumento(e.target.value)}
+                className="input-field pr-8 text-sm min-w-[180px]"
               >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <FileOutput className="h-4 w-4" />
-                )}
-                Gerar Relato PC
-              </button>
+                {tiposDocumento.map((tipo) => (
+                  <option key={tipo.id} value={tipo.id}>{tipo.nome}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             </div>
-          )}
 
-          {/* TAB: Gestão Alvos / 5W2H */}
-          {activeTab === 'alvos' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Descrição do Caso para Análise 5W2H
-                </label>
-                <textarea
-                  value={analise5w2h}
-                  onChange={(e) => setAnalise5w2h(e.target.value)}
-                  placeholder="Descreva o caso ou investigação para aplicar a metodologia 5W2H (What, Why, Where, When, Who, How, How Much)..."
-                  className="input-field min-h-[200px]"
-                />
-              </div>
-              <div className="p-4 bg-secondary/50 rounded-lg">
-                <h3 className="font-medium text-foreground mb-2">Metodologia 5W2H:</h3>
-                <ul className="text-sm text-muted-foreground space-y-1">
-                  <li><strong>WHAT:</strong> O que aconteceu?</li>
-                  <li><strong>WHY:</strong> Por que/qual motivação?</li>
-                  <li><strong>WHERE:</strong> Onde ocorreu?</li>
-                  <li><strong>WHEN:</strong> Quando ocorreu?</li>
-                  <li><strong>WHO:</strong> Quem são os envolvidos?</li>
-                  <li><strong>HOW:</strong> Como foi executado?</li>
-                  <li><strong>HOW MUCH:</strong> Qual o prejuízo/quantidade?</li>
-                </ul>
-              </div>
-              <button
-                onClick={handleAplicar5W2H}
-                disabled={loading || !analise5w2h.trim()}
-                className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Brain className="h-4 w-4" />
-                )}
-                Aplicar 5W2H
-              </button>
-            </div>
-          )}
+            {/* Botao de config */}
+            <button
+              onClick={() => setShowConfig(!showConfig)}
+              className="p-2 rounded-lg hover:bg-secondary"
+            >
+              <Settings className="h-5 w-5" />
+            </button>
 
-          {/* TAB: Gerar Documentos */}
-          {activeTab === 'documentos' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Tipo de Documento
-                </label>
-                <div className="relative">
-                  <select
-                    value={docTipo}
-                    onChange={(e) => setDocTipo(e.target.value)}
-                    className="input-field appearance-none pr-10"
-                  >
-                    {tiposDocumento.map((tipo) => (
-                      <option key={tipo.id} value={tipo.id}>{tipo.nome}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Unidade PCGO
-                </label>
-                <div className="relative">
-                  <select
-                    value={docUnidade}
-                    onChange={(e) => setDocUnidade(e.target.value)}
-                    className="input-field appearance-none pr-10"
-                  >
-                    {unidades.map((unidade) => (
-                      <option key={unidade.id} value={unidade.id}>{unidade.nome}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Dados para o Documento
-                </label>
-                <textarea
-                  value={docDados}
-                  onChange={(e) => setDocDados(e.target.value)}
-                  placeholder="Forneça todos os dados necessários para gerar o documento: alvos, endereços, telefones, justificativa, etc..."
-                  className="input-field min-h-[200px]"
-                />
-              </div>
+            {/* Preview do documento */}
+            {documentoAtual && (
               <button
-                onClick={handleGerarDocumento}
-                disabled={loading || !docDados.trim()}
-                className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
+                onClick={() => setShowDocPreview(!showDocPreview)}
+                className={`p-2 rounded-lg transition-colors ${
+                  showDocPreview ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
+                }`}
               >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <FileOutput className="h-4 w-4" />
-                )}
-                Gerar Documento
+                <Eye className="h-5 w-5" />
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Painel de Resultado */}
-        <div className="card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-foreground">Resultado</h2>
-            {(result || raiAnalise) && (
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCopy}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary text-foreground hover:bg-secondary/80 text-sm"
+        {/* Config Panel */}
+        {showConfig && (
+          <div className="p-4 border-b border-border bg-secondary/30">
+            <div className="flex items-center gap-4">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Unidade</label>
+                <select
+                  value={unidadeSelecionada}
+                  onChange={(e) => setUnidadeSelecionada(e.target.value)}
+                  className="input-field text-sm"
                 >
-                  {copied ? (
-                    <>
-                      <Check className="h-4 w-4 text-green-500" />
-                      Copiado!
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4" />
-                      Copiar
-                    </>
+                  {unidades.map((u) => (
+                    <option key={u.id} value={u.id}>{u.nome}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Area de Mensagens / Preview */}
+        <div className="flex-1 overflow-hidden flex">
+          {/* Chat */}
+          <div className={`flex-1 flex flex-col ${showDocPreview ? 'w-1/2' : 'w-full'}`}>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center">
+                  <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-600/20 flex items-center justify-center mb-4">
+                    <Brain className="h-10 w-10 text-primary" />
+                  </div>
+                  <h2 className="text-xl font-semibold text-foreground mb-2">
+                    Assistente Investigativo PCGO
+                  </h2>
+                  <p className="text-muted-foreground max-w-md mb-6">
+                    {tipoDocumento === 'general'
+                      ? 'Posso ajudar com analise de RAI, geracao de relatos, RELINT, representacoes e muito mais.'
+                      : `Vamos construir seu ${tiposDocumento.find(t => t.id === tipoDocumento)?.nome}. O que voce gostaria de adicionar?`
+                    }
+                  </p>
+                  {!currentSession && (
+                    <button onClick={createNewSession} className="btn-primary">
+                      Iniciar Nova Conversa
+                    </button>
                   )}
-                </button>
+                </div>
+              ) : (
+                <>
+                  {messages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                          msg.role === 'user'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-secondary text-foreground'
+                        }`}
+                      >
+                        <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                        {msg.role === 'assistant' && (
+                          <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border/30">
+                            <button
+                              onClick={() => copyToClipboard(msg.content)}
+                              className="text-xs flex items-center gap-1 opacity-70 hover:opacity-100"
+                            >
+                              {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                              {copied ? 'Copiado' : 'Copiar'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {loading && (
+                    <div className="flex justify-start">
+                      <div className="bg-secondary rounded-2xl px-4 py-3">
+                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </>
+              )}
+            </div>
+
+            {/* Input */}
+            {currentSession && (
+              <div className="p-4 border-t border-border">
+                {error && (
+                  <div className="mb-3 bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm flex items-center justify-between">
+                    <span>{error}</span>
+                    <button onClick={() => setError('')}><X className="h-4 w-4" /></button>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <textarea
+                    ref={inputRef}
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      tipoDocumento === 'general'
+                        ? 'Digite sua mensagem...'
+                        : 'Adicione informacoes ao documento...'
+                    }
+                    className="input-field flex-1 resize-none min-h-[48px] max-h-[200px]"
+                    rows={1}
+                    disabled={loading}
+                  />
+                  <button
+                    onClick={sendMessage}
+                    disabled={loading || !inputMessage.trim()}
+                    className="btn-primary px-4 disabled:opacity-50"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Send className="h-5 w-5" />
+                    )}
+                  </button>
+                </div>
               </div>
             )}
           </div>
 
-          {loading && (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-              <p className="text-muted-foreground">Processando com IA...</p>
-            </div>
-          )}
-
-          {!loading && !result && !raiAnalise && (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center mb-4">
-                <Brain className="h-8 w-8 text-muted-foreground" />
-              </div>
-              <p className="text-muted-foreground">
-                Os resultados aparecerão aqui após o processamento
-              </p>
-            </div>
-          )}
-
-          {/* Resultado de Análise RAI */}
-          {raiAnalise && (
-            <div className="space-y-4 max-h-[600px] overflow-y-auto">
-              <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
-                <h3 className="font-semibold text-primary mb-2">RAI Analisado</h3>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div><strong>Número:</strong> {raiAnalise.numero_rai || 'N/I'}</div>
-                  <div><strong>Data:</strong> {raiAnalise.data_fato || 'N/I'}</div>
-                  <div className="col-span-2"><strong>Local:</strong> {raiAnalise.local_fato || 'N/I'}</div>
-                  <div className="col-span-2"><strong>Tipificação:</strong> {raiAnalise.tipificacao || 'N/I'}</div>
+          {/* Preview do Documento */}
+          {showDocPreview && documentoAtual && (
+            <div className="w-1/2 border-l border-border flex flex-col bg-background">
+              <div className="p-3 border-b border-border flex items-center justify-between">
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Preview do Documento
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setEditingDoc(!editingDoc)}
+                    className={`p-1.5 rounded-lg ${editingDoc ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`}
+                  >
+                    <Edit3 className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={saveDocument}
+                    className="p-1.5 rounded-lg hover:bg-secondary text-green-500"
+                    title="Salvar documento"
+                  >
+                    <Save className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => downloadDocument('txt')}
+                    className="p-1.5 rounded-lg hover:bg-secondary"
+                    title="Download TXT"
+                  >
+                    <Download className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => downloadDocument('html')}
+                    className="p-1.5 rounded-lg hover:bg-secondary"
+                    title="Download HTML"
+                  >
+                    <FileOutput className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setShowDocPreview(false)}
+                    className="p-1.5 rounded-lg hover:bg-secondary"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
-
-              {raiAnalise.pessoas && raiAnalise.pessoas.length > 0 && (
-                <div>
-                  <h3 className="font-semibold text-foreground mb-2">Pessoas Envolvidas</h3>
-                  <div className="space-y-2">
-                    {raiAnalise.pessoas.map((pessoa, index) => (
-                      <div key={index} className="p-3 bg-secondary/50 rounded-lg text-sm">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                            pessoa.tipo === 'AUTOR' ? 'bg-red-500/20 text-red-400' :
-                            pessoa.tipo === 'VITIMA' ? 'bg-blue-500/20 text-blue-400' :
-                            'bg-gray-500/20 text-gray-400'
-                          }`}>
-                            {pessoa.tipo}
-                          </span>
-                          <strong>{pessoa.nome}</strong>
-                        </div>
-                        <div className="grid grid-cols-2 gap-1 text-muted-foreground">
-                          <div>CPF: {pessoa.cpf || 'N/I'}</div>
-                          <div>DN: {pessoa.data_nascimento || 'N/I'}</div>
-                          <div className="col-span-2">Mãe: {pessoa.mae || 'N/I'}</div>
-                          <div className="col-span-2">End: {pessoa.endereco || 'N/I'}</div>
-                          <div className="col-span-2">Tel: {pessoa.telefone || 'N/I'}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {raiAnalise.objetos_apreendidos && raiAnalise.objetos_apreendidos.length > 0 && (
-                <div>
-                  <h3 className="font-semibold text-foreground mb-2">Objetos Apreendidos</h3>
-                  <ul className="list-disc list-inside text-sm text-muted-foreground">
-                    {raiAnalise.objetos_apreendidos.map((obj, index) => (
-                      <li key={index}>{obj}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {raiAnalise.diligencias_sugeridas && raiAnalise.diligencias_sugeridas.length > 0 && (
-                <div>
-                  <h3 className="font-semibold text-foreground mb-2">Diligências Sugeridas</h3>
-                  <ul className="list-disc list-inside text-sm text-muted-foreground">
-                    {raiAnalise.diligencias_sugeridas.map((dil, index) => (
-                      <li key={index}>{dil}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {raiAnalise.observacoes && (
-                <div>
-                  <h3 className="font-semibold text-foreground mb-2">Observações</h3>
-                  <p className="text-sm text-muted-foreground">{raiAnalise.observacoes}</p>
-                </div>
-              )}
+              <div className="flex-1 overflow-y-auto p-4">
+                {editingDoc ? (
+                  <textarea
+                    value={documentoAtual}
+                    onChange={(e) => setDocumentoAtual(e.target.value)}
+                    className="w-full h-full input-field font-mono text-sm resize-none"
+                  />
+                ) : (
+                  <pre className="whitespace-pre-wrap text-sm text-foreground font-mono bg-secondary/30 p-4 rounded-lg">
+                    {documentoAtual}
+                  </pre>
+                )}
+              </div>
             </div>
           )}
-
-          {/* Resultado de Texto (Relato PC, Documentos, 5W2H) */}
-          {result && !raiAnalise && (
-            <div className="prose prose-invert max-w-none max-h-[600px] overflow-y-auto">
-              <pre className="whitespace-pre-wrap text-sm text-foreground bg-secondary/30 p-4 rounded-lg font-mono">
-                {result}
-              </pre>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Informações */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card p-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-              <FileText className="h-5 w-5 text-blue-500" />
-            </div>
-            <h3 className="font-semibold text-foreground">Análise RAI</h3>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Extrai automaticamente dados de RAIs: envolvidos, endereços, telefones, tipificação criminal.
-          </p>
-        </div>
-        <div className="card p-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center">
-              <FileOutput className="h-5 w-5 text-green-500" />
-            </div>
-            <h3 className="font-semibold text-foreground">Relato PC</h3>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Gera relatos técnicos com linguagem jurídica, blocos automáticos para Maria da Penha e ECA.
-          </p>
-        </div>
-        <div className="card p-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
-              <Brain className="h-5 w-5 text-purple-500" />
-            </div>
-            <h3 className="font-semibold text-foreground">Documentos</h3>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Gera RELINT, Levantamentos, Representações judiciais com formatação oficial PCGO.
-          </p>
         </div>
       </div>
     </div>
