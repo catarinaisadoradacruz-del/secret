@@ -18,7 +18,9 @@ import {
   Shield,
   Menu,
   X,
-  ChevronRight
+  ChevronRight,
+  Brain,
+  Target
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase/client'
 
@@ -55,8 +57,8 @@ export default function Sidebar({ isAdmin }: SidebarProps) {
   const menuItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/dashboard/investigations', label: 'Investigacoes', icon: FolderOpen },
-    { href: '/dashboard/alvos', label: 'Alvos', icon: Users },
-    { href: '/dashboard/rai', label: 'Analise RAI', icon: FileText },
+    { href: '/dashboard/alvos', label: 'Alvos', icon: Target },
+    { href: '/dashboard/assistente', label: 'Assistente IA', icon: Brain },
     { href: '/dashboard/phone-records', label: 'Registros Tel.', icon: Phone },
     { href: '/dashboard/forensic', label: 'Analise Forense', icon: Image },
     { href: '/dashboard/map', label: 'Mapa', icon: Map },
