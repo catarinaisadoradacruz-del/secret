@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+const GEMINI_VISION_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
 
 // System prompt completo baseado nas Skills da PCGO
 const SYSTEM_PROMPT = `# PCGO - Assistente Investigativo Unificado
@@ -176,6 +177,15 @@ Para cada investigacao, analisar:
 - **HOW (COMO)**: Modus operandi
 - **HOW MUCH (QUANTO)**: Prejuizo, quantidade de drogas/armas
 
+### 6. ANALISE DE IMAGENS (OCR)
+Quando receber imagens, voce deve:
+- Extrair TODO o texto visivel
+- Identificar documentos (RG, CPF, CNH, etc.)
+- Transcrever tabelas mantendo a estrutura
+- Identificar rostos e descreve-los
+- Ler placas de veiculos
+- Identificar locais/enderecos visiveis
+
 ## REGRAS CRITICAS
 
 ### PROIBIDO:
@@ -230,7 +240,9 @@ const CHAT_TYPES = {
   'relato': 'Elaboracao de Relato PC',
   'relint': 'Geracao de RELINT',
   'representacao': 'Geracao de Representacao',
-  '5w2h': 'Analise 5W2H'
+  '5w2h': 'Analise 5W2H',
+  'ocr': 'Extracao de texto de imagem',
+  'pdf_extract': 'Extracao de texto de PDF'
 }
 
 export async function POST(request: NextRequest) {
@@ -244,21 +256,150 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { prompt, type, context, sessionId, history } = body
+    const { prompt, type, context, sessionId, history, imageData, fileData } = body
 
-    if (!prompt) {
-      return NextResponse.json({ error: 'Prompt e obrigatorio' }, { status: 400 })
+    if (!prompt && !imageData && !fileData) {
+      return NextResponse.json({ error: 'Prompt, imagem ou arquivo e obrigatorio' }, { status: 400 })
     }
 
+    // ============================================
+    // PROCESSAMENTO DE OCR (IMAGENS)
+    // ============================================
+    if (type === 'ocr' && imageData) {
+      const ocrPrompt = prompt || 'Extraia todo o texto visivel nesta imagem. Se houver documentos, transcreva completamente. Se houver tabelas, formate-as.'
+
+      const visionRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: imageData.mimeType,
+                  data: imageData.data
+                }
+              },
+              {
+                text: `INSTRUCOES DE OCR PCGO:
+${ocrPrompt}
+
+REGRAS:
+1. Extraia TODO o texto visivel, mesmo pequeno
+2. Mantenha a estrutura original (paragrafos, listas)
+3. Identifique tipo de documento (RG, CPF, CNH, BO, etc.)
+4. Se houver tabelas, formate com | para colunas
+5. Nomes de pessoas em MAIUSCULAS
+6. Numeros de documentos exatamente como aparecem
+7. Se nao conseguir ler algo, indique [ILEGIVEL]`
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        }
+      }
+
+      const response = await fetch(`${GEMINI_VISION_URL}?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(visionRequest)
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Gemini Vision Error:', errorData)
+        return NextResponse.json({ error: 'Erro ao processar imagem' }, { status: 500 })
+      }
+
+      const data = await response.json()
+      const extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+
+      return NextResponse.json({
+        success: true,
+        response: extractedText,
+        type: 'ocr'
+      })
+    }
+
+    // ============================================
+    // PROCESSAMENTO DE PDF
+    // ============================================
+    if (type === 'pdf_extract' && fileData) {
+      // Para PDFs, usamos a capacidade de vision do Gemini
+      const pdfPrompt = prompt || 'Extraia todo o texto deste documento PDF.'
+
+      const pdfRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: fileData.mimeType,
+                  data: fileData.data
+                }
+              },
+              {
+                text: `INSTRUCOES DE EXTRACAO DE PDF:
+${pdfPrompt}
+
+REGRAS:
+1. Extraia TODO o texto do documento
+2. Mantenha a estrutura (titulos, paragrafos, listas)
+3. Se houver tabelas, formate adequadamente
+4. Nomes de pessoas em MAIUSCULAS
+5. Preserve numeros e datas exatamente como aparecem`
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 16384,
+        }
+      }
+
+      const response = await fetch(`${GEMINI_VISION_URL}?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pdfRequest)
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Gemini PDF Error:', errorData)
+        return NextResponse.json({ error: 'Erro ao processar PDF' }, { status: 500 })
+      }
+
+      const data = await response.json()
+      const extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+
+      return NextResponse.json({
+        success: true,
+        response: extractedText,
+        type: 'pdf_extract'
+      })
+    }
+
+    // ============================================
+    // CHAT NORMAL / GERACAO DE DOCUMENTOS
+    // ============================================
+
     // Construir mensagens do chat
-    const messages: Array<{ role: string; parts: { text: string }[] }> = [
+    const messages: Array<{ role: string; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }> = [
       {
         role: 'user',
         parts: [{ text: SYSTEM_PROMPT }]
       },
       {
         role: 'model',
-        parts: [{ text: 'Entendido. Sou o Assistente Investigativo da PCGO. Estou pronto para auxiliar com analise de RAI, elaboracao de relatos PC, gestao de investigacoes, geracao de RELINT, representacoes e outros documentos. Como posso ajudar?' }]
+        parts: [{ text: 'Entendido. Sou o Assistente Investigativo da PCGO. Estou pronto para auxiliar com analise de RAI, elaboracao de relatos PC, gestao de investigacoes, geracao de RELINT, representacoes e outros documentos. Posso tambem analisar imagens e extrair texto via OCR. Como posso ajudar?' }]
       }
     ]
 
@@ -375,6 +516,17 @@ INSTRUCOES:
 3. Retorne o documento completo atualizado`
     }
 
+    // Verificar se ha anexos no contexto
+    if (context?.anexos && context.anexos.length > 0) {
+      fullPrompt += '\n\n--- ARQUIVOS ANEXADOS ---\n'
+      for (const anexo of context.anexos) {
+        if (anexo.conteudo) {
+          fullPrompt += `\n[${anexo.nome} (${anexo.tipo})]:\n${anexo.conteudo}\n`
+        }
+      }
+      fullPrompt += '\n--- FIM DOS ANEXOS ---'
+    }
+
     // Adicionar a nova mensagem do usuario
     messages.push({
       role: 'user',
@@ -487,6 +639,64 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json({ sessions })
     }
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido'
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
+  }
+}
+
+// DELETE - Limpar conversa (manter sessao, deletar mensagens)
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = createServerSupabaseClient()
+
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      return NextResponse.json({ error: 'Nao autenticado' }, { status: 401 })
+    }
+
+    const { searchParams } = new URL(request.url)
+    const sessionId = searchParams.get('sessionId')
+    const messageId = searchParams.get('messageId')
+
+    if (messageId) {
+      // Deletar mensagem especifica
+      const { error } = await supabase
+        .from('chat_messages')
+        .delete()
+        .eq('id', messageId)
+
+      if (error) throw error
+
+      return NextResponse.json({ success: true, message: 'Mensagem deletada' })
+    } else if (sessionId) {
+      // Limpar todas as mensagens da sessao
+      const { error } = await supabase
+        .from('chat_messages')
+        .delete()
+        .eq('session_id', sessionId)
+
+      if (error) throw error
+
+      // Limpar anexos da sessao
+      await supabase
+        .from('chat_attachments')
+        .delete()
+        .eq('session_id', sessionId)
+
+      // Limpar documento em construcao
+      await supabase
+        .from('chat_sessions')
+        .update({
+          documento_em_construcao: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', sessionId)
+
+      return NextResponse.json({ success: true, message: 'Conversa limpa' })
+    }
+
+    return NextResponse.json({ error: 'sessionId ou messageId obrigatorio' }, { status: 400 })
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido'
     return NextResponse.json({ error: errorMessage }, { status: 500 })
