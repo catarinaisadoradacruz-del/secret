@@ -441,7 +441,7 @@ export default function AssistentePage() {
     if ((!inputMessage.trim() && pendingFiles.length === 0) || loading) return
 
     // Criar sessao se nao existir
-    let sessionId = currentSession?.id
+    let sessionId: string = currentSession?.id || ''
     if (!sessionId) {
       try {
         const titulo = tipoDocumento === 'general'
