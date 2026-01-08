@@ -43,7 +43,7 @@ interface ERB {
   erb_longitude: number | null
   erb_azimute: number | null
   data_hora: string
-  alvos?: { nome: string } | null
+  alvos?: { nome: string } | { nome: string }[] | null
 }
 
 interface Investigation {
@@ -438,7 +438,7 @@ export default function MapPage() {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-sm">{erb.alvos?.nome || '-'}</span>
+                          <span className="text-sm">{Array.isArray(erb.alvos) ? erb.alvos[0]?.nome : erb.alvos?.nome || '-'}</span>
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs text-muted-foreground">
