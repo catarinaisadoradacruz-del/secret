@@ -17,7 +17,6 @@ export default async function DashboardLayout({
     redirect('/login')
   }
 
-  // Get user data to check if admin
   const { data: userData } = await supabase
     .from('users')
     .select('is_admin')
@@ -27,14 +26,28 @@ export default async function DashboardLayout({
   const isAdmin = userData?.is_admin || false
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <aside className="w-64 flex-shrink-0">
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* Desktop Sidebar */}
+      <aside className="hidden lg:block w-64 flex-shrink-0">
         <Sidebar isAdmin={isAdmin} />
       </aside>
-      <main className="flex-1 overflow-y-auto bg-background">
-        <div className="container mx-auto p-6 max-w-7xl">
+
+      {/* Mobile Sidebar (rendered inside Sidebar component) */}
+      <div className="lg:hidden">
+        <Sidebar isAdmin={isAdmin} />
+      </div>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        {/* Mobile top padding for fixed header */}
+        <div className="lg:hidden h-16" />
+
+        <div className="p-4 lg:p-6 xl:p-8 max-w-7xl mx-auto">
           {children}
         </div>
+
+        {/* Mobile bottom padding */}
+        <div className="lg:hidden h-6 safe-bottom" />
       </main>
     </div>
   )
