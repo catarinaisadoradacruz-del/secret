@@ -37,3 +37,24 @@ next-env.d.ts
 
 # credentials (CRITICAL - NEVER COMMIT)
 .credentials/
+
+# VS Code settings with secrets
+.vscode/settings.json
+
+# Scripts with hardcoded credentials (local only)
+scripts/supabase-admin.js
+scripts/git-setup.sh
+
+# Claude instructions (contain secrets - DO NOT COMMIT)
+CLAUDE_VSCODE_INSTRUCTIONS.md
+PROMPT_VSCODE.md
+UNICA_COISA_MANUAL.md
+CRIAR_FUNCAO_EXEC_SQL.sql
+EXECUTAR_NO_SUPABASE.sql
+
+# Python scripts with credentials
+*.py
+
+# Local scripts
+run_*.ps1
+execute_*.js
