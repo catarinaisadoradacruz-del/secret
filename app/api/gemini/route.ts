@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { IP_PASSIVO_PROMPT, CHECKLIST_DILIGENCIAS, TIPIFICACOES_HOMICIDIO } from '@/lib/prompts/ip-passivo'
 
 const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
@@ -186,6 +187,34 @@ Quando receber imagens, voce deve:
 - Ler placas de veiculos
 - Identificar locais/enderecos visiveis
 
+### 7. MODULO IP PASSIVO (INQUERITO POLICIAL PASSIVO)
+
+#### CONCEITO FUNDAMENTAL
+- RELATORIO = MODELO FIXO (template que nao muda)
+- IP = PARAMETRO (dados variaveis que preenchem o modelo)
+- O sistema NAO CRIA conteudo - apenas extrai dados do IP e preenche o modelo
+
+#### COMANDOS DISPONIVEIS
+- /ANALISAR IP - Analisa o inquerito policial e extrai todos os dados variaveis
+- /GERAR RELATORIO - Preenche o modelo com os dados extraidos
+- /LISTAR PENDENCIAS - Lista diligencias pendentes identificadas
+- /STATUS - Mostra dados ja extraidos
+
+#### DADOS A EXTRAIR DO IP
+1. DADOS BASICOS: Numero do IP, Delegacia, Data Instauracao, RAI origem, Tipificacao
+2. DADOS DO FATO: Data, Local completo, Narrativa PM, Narrativa PC
+3. VITIMA: Nome, Sexo, Nascimento, Filiacao, RG, CPF, Endereco, Telefone
+4. INVESTIGADO(S): Status (IDENTIFICADO/NAO IDENTIFICADO), Qualificacao ou Alcunhas
+5. TESTEMUNHAS: Nome, Qualificacao, Contato, Status (OUVIDA/NAO OUVIDA)
+6. LAUDOS/DOCUMENTOS: Tipo, Numero, Status (JUNTADO/PENDENTE)
+
+#### ESTRUTURA DO RELATORIO IP PASSIVO
+1. DO OBJETO DO RELATORIO
+2. DOS FATOS
+3. DAS DILIGENCIAS PRELIMINARES
+4. DAS DILIGENCIAS POSTERIORES (se houver)
+5. CONCLUSAO
+
 ## REGRAS CRITICAS
 
 ### PROIBIDO:
@@ -242,8 +271,14 @@ const CHAT_TYPES = {
   'representacao': 'Geracao de Representacao',
   '5w2h': 'Analise 5W2H',
   'ocr': 'Extracao de texto de imagem',
-  'pdf_extract': 'Extracao de texto de PDF'
+  'pdf_extract': 'Extracao de texto de PDF',
+  'ip_passivo_analisar': 'Analise de IP Passivo',
+  'ip_passivo_relatorio': 'Geracao de Relatorio IP Passivo',
+  'ip_passivo_pendencias': 'Listagem de Pendencias IP'
 }
+
+// Log para evitar warning de variavel nao usada
+console.debug('Chat types disponíveis:', Object.keys(CHAT_TYPES).length)
 
 export async function POST(request: NextRequest) {
   try {
@@ -498,6 +533,75 @@ INSTRUCOES:
 5. Fundamente a necessidade
 
 DADOS:
+${prompt}`
+    } else if (type === 'ip_passivo_analisar' || prompt.toLowerCase().includes('/analisar ip')) {
+      // Analise de Inquerito Policial Passivo
+      fullPrompt = `${IP_PASSIVO_PROMPT}
+
+${CHECKLIST_DILIGENCIAS}
+
+${TIPIFICACOES_HOMICIDIO}
+
+TAREFA: Analise o Inquerito Policial fornecido e extraia TODOS os dados conforme o formato especificado.
+
+INSTRUCOES:
+1. Identifique o numero do IP, delegacia e data de instauracao
+2. Extraia dados completos da vitima
+3. Identifique status dos investigados
+4. Liste TODAS as testemunhas e seu status (ouvida/nao ouvida)
+5. Liste TODOS os laudos/documentos e seu status (juntado/pendente)
+6. Identifique pendencias automaticamente
+7. Use o formato de saida padrao da skill
+
+INQUERITO PARA ANALISE:
+${prompt}`
+    } else if (type === 'ip_passivo_relatorio' || prompt.toLowerCase().includes('/gerar relatorio')) {
+      // Geracao de Relatorio de IP Passivo
+      const unidade = context?.unidade || 'DIH'
+      const diligenciasPosteriores = context?.diligenciasPosteriores || []
+
+      fullPrompt = `${IP_PASSIVO_PROMPT}
+
+TAREFA: Gere o RELATORIO FINAL do Inquerito Policial Passivo.
+
+UNIDADE EMISSORA: ${unidade}
+DILIGENCIAS POSTERIORES INFORMADAS: ${diligenciasPosteriores.length > 0 ? diligenciasPosteriores.join(', ') : 'Nenhuma'}
+
+INSTRUCOES:
+1. Use os dados ja extraidos da analise anterior
+2. Siga a estrutura oficial do relatorio:
+   - DO OBJETO DO RELATORIO
+   - DOS FATOS
+   - DAS DILIGENCIAS PRELIMINARES
+   - DAS DILIGENCIAS POSTERIORES (se houver)
+   - CONCLUSAO
+3. Use linguagem juridica formal
+4. Nomes em MAIUSCULAS
+5. Numeros de documentos em negrito
+6. NAO invente dados - use "NAO INFORMADO" quando ausente
+
+DADOS DO IP:
+${prompt}`
+    } else if (type === 'ip_passivo_pendencias' || prompt.toLowerCase().includes('/listar pendencias')) {
+      // Listagem de pendencias do IP
+      fullPrompt = `${CHECKLIST_DILIGENCIAS}
+
+TAREFA: Liste TODAS as pendencias identificadas no Inquerito Policial.
+
+CATEGORIAS DE PENDENCIAS:
+1. Testemunhas NAO ouvidas
+2. Laudos/documentos pendentes
+3. Consultas em sistemas nao realizadas
+4. Diligencias de campo pendentes
+5. Analises tecnicas pendentes
+
+Para cada pendencia, indique:
+- Tipo da pendencia
+- Descricao
+- Prioridade (ALTA/MEDIA/BAIXA)
+- Sugestao de acao
+
+DADOS DO IP:
 ${prompt}`
     } else if (type === 'continue_document') {
       // Para continuacao de documentos em construcao
