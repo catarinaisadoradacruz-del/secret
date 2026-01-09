@@ -7,27 +7,32 @@ const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
 const MAX_INLINE_SIZE = 4 * 1024 * 1024 // 4MB para inline
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB maximo
 
-// Prompt otimizado para PDFs com imagens e texto
-const EXTRACTION_PROMPT = `TAREFA: Extraia TODO o conteudo deste documento PDF.
+// Prompt otimizado para PDFs com imagens e texto - VERSAO MELHORADA
+const EXTRACTION_PROMPT = `TAREFA CRITICA: Voce DEVE extrair o conteudo COMPLETO deste documento PDF, TODAS as paginas, sem excecao.
 
-INSTRUCOES CRITICAS:
-1. Este documento pode conter TEXTO E/OU IMAGENS - extraia TUDO
-2. Se houver imagens escaneadas, aplique OCR e transcreva o texto das imagens
-3. Extraia ABSOLUTAMENTE TODO o texto visivel, incluindo:
-   - Texto normal
+ATENCAO: Este documento tem MUITAS PAGINAS. Voce DEVE processar CADA UMA DELAS.
+
+INSTRUCOES OBRIGATORIAS:
+1. PROCESSE TODAS AS PAGINAS do documento - do inicio ao fim
+2. Para CADA PAGINA, extraia TODO o texto visivel
+3. Se houver imagens escaneadas, aplique OCR e transcreva
+4. Extraia ABSOLUTAMENTE TODO o conteudo:
+   - Texto normal de todas as paginas
    - Texto em imagens
-   - Tabelas (formate usando | para separar colunas)
-   - Cabecalhos e rodapes
-   - Carimbos e assinaturas digitalizadas
-   - Anotacoes manuscritas (se legiveis)
-4. Preserve a estrutura original (titulos, paragrafos, listas)
-5. Preserve numeros, datas, CPFs, telefones EXATAMENTE como aparecem
-6. Nomes de pessoas devem ficar em MAIUSCULAS
-7. NAO resuma, NAO interprete - apenas transcreva fielmente
-8. Se alguma parte estiver ilegivel, marque como [ILEGIVEL]
-9. Se houver multiplas paginas, processe TODAS
+   - Tabelas (formate com | para colunas)
+   - Cabecalhos e rodapes de cada pagina
+   - Carimbos, assinaturas, anotacoes
+5. MARQUE o inicio de cada pagina com: --- PAGINA X ---
+6. Preserve numeros, datas, CPFs, telefones EXATAMENTE
+7. Nomes de pessoas em MAIUSCULAS
+8. NAO RESUMA, NAO INTERPRETE - transcreva TUDO
+9. Se algo estiver ilegivel: [ILEGIVEL]
+10. Se o documento tiver 100 paginas, extraia as 100 paginas
 
-Comece a transcricao completa:`
+IMPORTANTE: A resposta deve conter o texto COMPLETO de TODAS as paginas.
+NAO pare no meio. NAO resuma. NAO corte.
+
+Comece a transcricao COMPLETA de TODAS as paginas:`
 
 export async function POST(request: NextRequest) {
   console.log('=== INICIO PROCESSAMENTO PDF ===')
@@ -156,7 +161,7 @@ async function extractWithInlineData(base64Data: string, mimeType: string, force
         }],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 32768
+          maxOutputTokens: 100000 // Aumentado para 100K tokens
         }
       })
     }
@@ -304,7 +309,7 @@ async function extractWithFileAPI(base64Data: string, fileName: string, mimeType
         }],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 65536 // Maior para documentos grandes
+          maxOutputTokens: 100000 // Aumentado para 100K tokens - documentos grandes
         }
       })
     }

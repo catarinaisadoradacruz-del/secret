@@ -812,25 +812,31 @@ ${result.preview.content}`
                   }
                 },
                 {
-                  text: `TAREFA: Extraia TODO o conteudo deste documento PDF.
+                  text: `TAREFA CRITICA: Voce DEVE extrair o conteudo COMPLETO deste documento PDF, TODAS as paginas, sem excecao.
 
-INSTRUCOES:
-1. Extraia ABSOLUTAMENTE TODO o texto visivel
-2. Se houver imagens escaneadas, aplique OCR
-3. Mantenha a estrutura original (titulos, paragrafos, listas, tabelas)
-4. Tabelas devem ser formatadas com | para separar colunas
-5. Preserve numeros, datas, CPFs, telefones EXATAMENTE como aparecem
-6. Nomes de pessoas devem ficar em MAIUSCULAS
-7. NAO resuma - transcreva fielmente
-8. Marque partes ilegiveis como [ILEGIVEL]
+ATENCAO: Este documento pode ter MUITAS PAGINAS. Voce DEVE processar CADA UMA DELAS.
 
-Comece a transcricao:`
+INSTRUCOES OBRIGATORIAS:
+1. PROCESSE TODAS AS PAGINAS do documento - do inicio ao fim
+2. Para CADA PAGINA, extraia TODO o texto visivel
+3. Se houver imagens escaneadas, aplique OCR e transcreva
+4. Extraia ABSOLUTAMENTE TODO o conteudo de todas as paginas
+5. MARQUE o inicio de cada pagina com: --- PAGINA X ---
+6. Preserve numeros, datas, CPFs, telefones EXATAMENTE
+7. Nomes de pessoas em MAIUSCULAS
+8. NAO RESUMA, NAO INTERPRETE - transcreva TUDO
+9. Se algo estiver ilegivel: [ILEGIVEL]
+
+IMPORTANTE: A resposta deve conter o texto COMPLETO de TODAS as paginas.
+NAO pare no meio. NAO resuma. NAO corte.
+
+Comece a transcricao COMPLETA:`
                 }
               ]
             }],
             generationConfig: {
               temperature: 0.1,
-              maxOutputTokens: 65536
+              maxOutputTokens: 100000 // Aumentado para documentos grandes
             }
           })
         }
