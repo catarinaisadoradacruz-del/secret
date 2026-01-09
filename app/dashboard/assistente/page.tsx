@@ -44,6 +44,17 @@ import {
 import jsPDF from 'jspdf'
 
 // ==================== INTERFACES ====================
+interface DocumentContext {
+  id: string
+  fileName: string
+  fileType: string
+  fileSize: number
+  totalChunks: number
+  currentChunk: number
+  entities: any[]
+  isLarge: boolean
+}
+
 interface ChatMessage {
   id?: string
   role: 'user' | 'assistant'
@@ -180,6 +191,12 @@ export default function AssistentePage() {
   // Estados de retry
   const [retryCount, setRetryCount] = useState(0)
   const maxRetries = 3
+
+  // Estados de processamento de documentos grandes
+  const [documentContexts, setDocumentContexts] = useState<DocumentContext[]>([])
+  const [processingDocument, setProcessingDocument] = useState(false)
+  const [processingProgress, setProcessingProgress] = useState(0)
+  const [showDocumentPanel, setShowDocumentPanel] = useState(false)
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -409,37 +426,47 @@ export default function AssistentePage() {
 
   const processAndUploadFiles = async (files: File[], sessionId: string) => {
     const uploadedAttachments: ChatAttachment[] = []
+    const LARGE_FILE_THRESHOLD = 50000 // 50KB de texto = documento grande
 
     for (const file of files) {
       try {
         let conteudoExtraido = ''
         let base64Data = ''
+        let isLargeDocument = false
 
         const arrayBuffer = await file.arrayBuffer()
         const base64 = btoa(new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''))
         base64Data = base64
 
-        // OCR para imagens
+        // OCR para imagens usando nova API
         if (file.type.startsWith('image/')) {
           try {
-            const ocrResponse = await fetch('/api/gemini', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                prompt: 'Extraia todo o texto visivel nesta imagem.',
-                type: 'ocr',
-                imageData: { mimeType: file.type, data: base64 }
-              })
-            })
-            if (ocrResponse.ok) {
-              const ocrData = await ocrResponse.json()
-              conteudoExtraido = ocrData.response || ''
-            }
+            const ocrText = await runOCROnImage(base64, file.type)
+            conteudoExtraido = ocrText
           } catch (err) {
             console.error('Erro no OCR:', err)
+            // Fallback para API antiga
+            try {
+              const ocrResponse = await fetch('/api/gemini', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  prompt: 'Extraia todo o texto visivel nesta imagem.',
+                  type: 'ocr',
+                  imageData: { mimeType: file.type, data: base64 }
+                })
+              })
+              if (ocrResponse.ok) {
+                const ocrData = await ocrResponse.json()
+                conteudoExtraido = ocrData.response || ''
+              }
+            } catch (e) {
+              console.error('Erro no OCR fallback:', e)
+            }
           }
         } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
           conteudoExtraido = await file.text()
+          isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
         } else if (file.type === 'application/pdf') {
           try {
             const pdfResponse = await fetch('/api/gemini', {
@@ -454,9 +481,30 @@ export default function AssistentePage() {
             if (pdfResponse.ok) {
               const pdfData = await pdfResponse.json()
               conteudoExtraido = pdfData.response || ''
+              isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
             }
           } catch (err) {
             console.error('Erro ao processar PDF:', err)
+          }
+        }
+
+        // Processar documento grande automaticamente
+        if (isLargeDocument && conteudoExtraido.length > LARGE_FILE_THRESHOLD) {
+          const result = await processLargeDocument(
+            conteudoExtraido,
+            file.name,
+            file.type,
+            file.size
+          )
+
+          if (result) {
+            // Adicionar info sobre documento grande na mensagem
+            conteudoExtraido = `[DOCUMENTO GRANDE: ${file.name}]
+Dividido em ${result.stats.totalChunks} partes para analise precisa.
+Entidades encontradas: ${result.entities.length}
+${result.preview.info}
+
+${result.preview.content}`
           }
         }
 
@@ -482,6 +530,130 @@ export default function AssistentePage() {
     }
 
     return uploadedAttachments
+  }
+
+  // ==================== PROCESSAMENTO DE DOCUMENTOS GRANDES ====================
+  const processLargeDocument = async (content: string, fileName: string, fileType: string, fileSize: number) => {
+    if (!currentSession) return null
+
+    setProcessingDocument(true)
+    setProcessingProgress(0)
+
+    try {
+      const response = await fetch('/api/documents/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content,
+          fileName,
+          fileType,
+          fileSize,
+          sessionId: currentSession.id
+        })
+      })
+
+      if (!response.ok) throw new Error('Erro ao processar documento')
+
+      const data = await response.json()
+
+      const newContext: DocumentContext = {
+        id: data.documentId,
+        fileName,
+        fileType,
+        fileSize,
+        totalChunks: data.stats.totalChunks,
+        currentChunk: 0,
+        entities: data.entities || [],
+        isLarge: data.isLarge
+      }
+
+      setDocumentContexts(prev => [...prev, newContext])
+      setProcessingProgress(100)
+
+      return {
+        context: newContext,
+        preview: data.preview,
+        stats: data.stats,
+        entities: data.entities
+      }
+    } catch (err) {
+      console.error('Erro ao processar documento:', err)
+      return null
+    } finally {
+      setProcessingDocument(false)
+    }
+  }
+
+  const loadNextChunks = async (documentId: string, count: number = 2) => {
+    const docContext = documentContexts.find(d => d.id === documentId)
+    if (!docContext) return null
+
+    try {
+      const response = await fetch(
+        `/api/documents/process?documentId=${documentId}&startIndex=${docContext.currentChunk}&count=${count}`
+      )
+
+      if (!response.ok) throw new Error('Erro ao carregar partes')
+
+      const data = await response.json()
+
+      // Atualizar posicao atual
+      setDocumentContexts(prev =>
+        prev.map(d =>
+          d.id === documentId
+            ? { ...d, currentChunk: data.nextIndex }
+            : d
+        )
+      )
+
+      return data
+    } catch (err) {
+      console.error('Erro ao carregar chunks:', err)
+      return null
+    }
+  }
+
+  const searchInDocument = async (documentId: string, searchTerm: string) => {
+    try {
+      const response = await fetch(
+        `/api/documents/process?documentId=${documentId}&search=${encodeURIComponent(searchTerm)}`
+      )
+
+      if (!response.ok) throw new Error('Erro na busca')
+
+      return await response.json()
+    } catch (err) {
+      console.error('Erro na busca:', err)
+      return null
+    }
+  }
+
+  const runOCROnImage = async (imageBase64: string, mimeType: string) => {
+    try {
+      const response = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64,
+          mimeType,
+          extractTables: true
+        })
+      })
+
+      if (!response.ok) throw new Error('Erro no OCR')
+
+      const data = await response.json()
+      return data.text || ''
+    } catch (err) {
+      console.error('Erro no OCR:', err)
+      return ''
+    }
+  }
+
+  const removeDocumentContext = (documentId: string) => {
+    setDocumentContexts(prev => prev.filter(d => d.id !== documentId))
+    // Remover do backend tambem
+    fetch(`/api/documents/process?documentId=${documentId}`, { method: 'DELETE' }).catch(console.error)
   }
 
   // ==================== FUNCOES DE MENSAGEM ====================
@@ -1106,6 +1278,19 @@ export default function AssistentePage() {
               </button>
             )}
 
+            {documentContexts.length > 0 && (
+              <button
+                onClick={() => setShowDocumentPanel(!showDocumentPanel)}
+                className={`p-2 rounded-lg relative ${showDocumentPanel ? 'bg-green-500 text-white' : 'hover:bg-secondary text-green-400'}`}
+                title="Documentos Carregados"
+              >
+                <FileText className="h-5 w-5" />
+                <span className="absolute -top-1 -right-1 bg-green-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                  {documentContexts.length}
+                </span>
+              </button>
+            )}
+
             {currentSession && messages.length > 0 && (
               <>
                 <button onClick={clearConversation} className="p-2 rounded-lg hover:bg-red-500/20 text-red-400" title="Limpar"><Eraser className="h-5 w-5" /></button>
@@ -1164,6 +1349,141 @@ export default function AssistentePage() {
                   <button onClick={() => deleteAttachment(att.id)} className="p-1 hover:bg-red-500/20 rounded text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Document Contexts Panel - Documentos Grandes */}
+        {showDocumentPanel && documentContexts.length > 0 && (
+          <div className="p-4 border-b border-border bg-green-500/10 max-h-64 overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-green-400">
+                Documentos Grandes Carregados ({documentContexts.length})
+              </h3>
+              <button onClick={() => setShowDocumentPanel(false)}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              {documentContexts.map((doc) => (
+                <div key={doc.id} className="bg-background rounded-lg border border-green-500/30 p-3">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-5 w-5 text-green-400" />
+                      <div>
+                        <p className="font-medium text-sm">{doc.fileName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatFileSize(doc.fileSize)} | {doc.totalChunks} partes
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removeDocumentContext(doc.id)}
+                      className="p-1 hover:bg-red-500/20 rounded text-red-400"
+                      title="Remover"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Barra de progresso de leitura */}
+                  <div className="mb-2">
+                    <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                      <span>Lidas: {doc.currentChunk}/{doc.totalChunks} partes</span>
+                      <span>{Math.round((doc.currentChunk / doc.totalChunks) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-secondary rounded-full h-1.5">
+                      <div
+                        className="bg-green-500 h-1.5 rounded-full transition-all"
+                        style={{ width: `${(doc.currentChunk / doc.totalChunks) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Acoes */}
+                  <div className="flex gap-2">
+                    {doc.currentChunk < doc.totalChunks && (
+                      <button
+                        onClick={async () => {
+                          const data = await loadNextChunks(doc.id, 2)
+                          if (data && data.content) {
+                            setInputMessage(prev =>
+                              prev + `\n\n[Proximas partes de ${doc.fileName}]:\n${data.content}`
+                            )
+                          }
+                        }}
+                        className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 flex items-center gap-1"
+                      >
+                        <ChevronRight className="h-3 w-3" />
+                        Carregar proximas partes
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        const searchTerm = prompt('Buscar no documento:')
+                        if (searchTerm) {
+                          searchInDocument(doc.id, searchTerm).then(result => {
+                            if (result && result.content) {
+                              setInputMessage(prev =>
+                                prev + `\n\n[Busca "${searchTerm}" em ${doc.fileName}]:\n${result.content}`
+                              )
+                            } else if (result && result.message) {
+                              alert(result.message)
+                            }
+                          })
+                        }
+                      }}
+                      className="text-xs px-2 py-1 bg-secondary text-foreground rounded hover:bg-secondary/80 flex items-center gap-1"
+                    >
+                      <Search className="h-3 w-3" />
+                      Buscar
+                    </button>
+                  </div>
+
+                  {/* Entidades encontradas */}
+                  {doc.entities.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-border">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        Entidades encontradas: {doc.entities.length}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {doc.entities.slice(0, 10).map((e: any, i: number) => (
+                          <span
+                            key={i}
+                            className="text-xs px-1.5 py-0.5 bg-secondary rounded"
+                            title={e.context}
+                          >
+                            {e.type}: {e.value}
+                          </span>
+                        ))}
+                        {doc.entities.length > 10 && (
+                          <span className="text-xs text-muted-foreground">
+                            +{doc.entities.length - 10} mais
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Processing Indicator */}
+        {processingDocument && (
+          <div className="p-3 border-b border-border bg-yellow-500/10">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-yellow-500" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-yellow-500">Processando documento grande...</p>
+                <div className="w-full bg-secondary rounded-full h-1.5 mt-1">
+                  <div
+                    className="bg-yellow-500 h-1.5 rounded-full transition-all"
+                    style={{ width: `${processingProgress}%` }}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         )}
