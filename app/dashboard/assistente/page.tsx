@@ -701,72 +701,112 @@ ${result.preview.content}`
     }
   }
 
-  // Extrair texto de PDF grande usando API que divide em paginas
+  // Estado para mensagens de log do processamento PDF
+  const [pdfProcessingLogs, setPdfProcessingLogs] = useState<string[]>([])
+
+  // Extrair texto de PDF grande usando API com streaming (1 pagina por vez com logs)
   const extractPDFWithGeminiFileAPI = async (file: File): Promise<string> => {
-    console.log('   📤 Usando API split-extract (pagina por pagina)...')
+    console.log('   📤 Usando API extract-stream (1 pagina por vez com logs)...')
+    setPdfProcessingLogs([])
 
     try {
-      // Usar a nova API que divide o PDF em paginas
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('maxPages', '50') // Processar 50 paginas por vez
 
+      const response = await fetch('/api/pdf/extract-stream', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      })
+
+      if (!response.ok) {
+        throw new Error('Erro ao iniciar processamento')
+      }
+
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
       let fullText = ''
-      let startPage = 1
-      let hasMore = true
-      let totalPages = 0
+      let buffer = ''
 
-      while (hasMore) {
-        console.log(`   📄 Processando paginas a partir de ${startPage}...`)
+      while (reader) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-        const formDataBatch = new FormData()
-        formDataBatch.append('file', file)
-        formDataBatch.append('maxPages', '20') // 20 paginas por lote
-        formDataBatch.append('startPage', startPage.toString())
+        buffer += decoder.decode(value, { stream: true })
 
-        const response = await fetch('/api/pdf/split-extract', {
-          method: 'POST',
-          body: formDataBatch,
-          credentials: 'include'
-        })
+        // Processar eventos SSE
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
 
-        if (!response.ok) {
-          const errorData = await response.json()
-          console.error('   ❌ Erro na API:', errorData)
-          throw new Error(errorData.error || 'Erro ao processar PDF')
-        }
+        for (const line of lines) {
+          if (!line.trim()) continue
 
-        const data = await response.json()
+          const eventMatch = line.match(/event: (\w+)/)
+          const dataMatch = line.match(/data: (.+)/)
 
-        if (data.success) {
-          fullText += data.text
-          totalPages = data.totalPages
-          hasMore = data.hasMore
-          startPage = data.nextStartPage || startPage + 20
+          if (eventMatch && dataMatch) {
+            const eventType = eventMatch[1]
+            try {
+              const data = JSON.parse(dataMatch[1])
 
-          console.log(`   ✅ Lote processado: ${data.processedPages} paginas, ${data.totalChars} chars`)
-          console.log(`   📊 Progresso: ${data.endPage}/${totalPages} paginas`)
+              switch (eventType) {
+                case 'start':
+                  console.log('   🚀', data.message)
+                  setPdfProcessingLogs(prev => [...prev, `🚀 ${data.message}`])
+                  break
 
-          // Atualizar progresso visual
-          setProcessingProgress(Math.round((data.endPage / totalPages) * 100))
-        } else {
-          throw new Error(data.error || 'Erro desconhecido')
-        }
+                case 'info':
+                  console.log('   📋', data.message)
+                  setPdfProcessingLogs(prev => [...prev, `📋 ${data.message}`])
+                  break
 
-        // Pequeno delay entre lotes
-        if (hasMore) {
-          await new Promise(r => setTimeout(r, 1000))
+                case 'log':
+                  console.log('   💬', data.message)
+                  setPdfProcessingLogs(prev => [...prev, `💬 ${data.message}`])
+                  break
+
+                case 'progress':
+                  console.log(`   📄 ${data.message}`)
+                  setPdfProcessingLogs(prev => {
+                    const newLogs = [...prev]
+                    const lastIdx = newLogs.findIndex(l => l.startsWith('📄 Processando'))
+                    if (lastIdx >= 0) {
+                      newLogs[lastIdx] = `📄 ${data.message}`
+                    } else {
+                      newLogs.push(`📄 ${data.message}`)
+                    }
+                    return newLogs
+                  })
+                  setProcessingProgress(data.percent)
+                  break
+
+                case 'page_done':
+                  console.log(`   ✅ ${data.message}`)
+                  setPdfProcessingLogs(prev => [...prev, `✅ Pagina ${data.page}: ${data.chars} chars`])
+                  break
+
+                case 'complete':
+                  console.log('   🎉', data.message)
+                  setPdfProcessingLogs(prev => [...prev, `🎉 Concluido! ${data.totalChars} caracteres`])
+                  fullText = data.text
+                  break
+
+                case 'error':
+                  console.error('   ❌', data.message)
+                  setPdfProcessingLogs(prev => [...prev, `❌ ${data.message}`])
+                  throw new Error(data.message)
+              }
+            } catch (e) {}
+          }
         }
       }
 
-      console.log(`   ✅ PDF completo: ${fullText.length} caracteres de ${totalPages} paginas`)
+      console.log(`   ✅ PDF completo: ${fullText.length} caracteres`)
       return fullText
 
     } catch (err: any) {
-      console.error('   ❌ Erro no split-extract:', err.message)
-
-      // Fallback: tentar metodo antigo (Gemini File API direto)
-      console.log('   🔄 Tentando fallback com Gemini File API...')
+      console.error('   ❌ Erro no extract-stream:', err.message)
+      setPdfProcessingLogs(prev => [...prev, `❌ Erro: ${err.message}`, `🔄 Tentando metodo alternativo...`])
       return await extractPDFWithGeminiFileAPIFallback(file)
     }
   }
@@ -1829,11 +1869,38 @@ ${result.preview.content}`
 
                   {(loading || uploadingFiles) && !isStreaming && (
                     <div className="flex justify-start">
-                      <div className="bg-secondary rounded-2xl px-4 py-3 flex items-center gap-2">
-                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                        <span className="text-sm text-muted-foreground">
-                          {uploadingFiles ? 'Processando arquivos...' : 'Gerando resposta...'}
-                        </span>
+                      <div className="bg-secondary rounded-2xl px-4 py-3 max-w-md">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                          <span className="text-sm font-medium">
+                            {uploadingFiles ? 'Processando arquivos...' : 'Gerando resposta...'}
+                          </span>
+                        </div>
+                        {/* Logs de processamento do PDF */}
+                        {pdfProcessingLogs.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-border/30 space-y-1 max-h-48 overflow-y-auto">
+                            {pdfProcessingLogs.slice(-8).map((log, idx) => (
+                              <div key={idx} className="text-xs text-muted-foreground font-mono">
+                                {log}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Barra de progresso */}
+                        {processingProgress > 0 && processingProgress < 100 && (
+                          <div className="mt-2 pt-2 border-t border-border/30">
+                            <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                              <span>Progresso</span>
+                              <span>{processingProgress}%</span>
+                            </div>
+                            <div className="h-1.5 bg-background rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-primary transition-all duration-300"
+                                style={{ width: `${processingProgress}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

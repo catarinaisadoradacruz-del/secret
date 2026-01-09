@@ -3,19 +3,26 @@ import { PDFDocument } from 'pdf-lib'
 
 const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
 
-// Prompt otimizado para extrair texto de UMA pagina
-const PAGE_EXTRACTION_PROMPT = `Extraia TODO o texto desta pagina do documento.
+// Prompt otimizado para extrair texto de UMA pagina com maxima precisao
+const PAGE_EXTRACTION_PROMPT = `TAREFA: Extraia com MAXIMA PRECISAO todo o texto desta pagina.
 
-INSTRUCOES:
-1. Transcreva ABSOLUTAMENTE TODO o texto visivel
-2. Se for imagem escaneada, aplique OCR
-3. Preserve numeros, datas, CPFs, telefones EXATAMENTE
-4. Nomes de pessoas em MAIUSCULAS
-5. Tabelas: use | para separar colunas
+INSTRUCOES CRITICAS:
+1. Transcreva ABSOLUTAMENTE TODO o texto visivel - cada palavra, cada numero
+2. Se for imagem escaneada, aplique OCR com cuidado
+3. Preserve EXATAMENTE como aparece:
+   - Numeros de processos, protocolos, IPs
+   - Datas (DD/MM/AAAA)
+   - CPFs, RGs, CNPJs
+   - Telefones
+   - Enderecos completos
+   - Valores monetarios
+4. Nomes de pessoas devem ficar em MAIUSCULAS
+5. Tabelas: formate com | para separar colunas
 6. Se algo estiver ilegivel: [ILEGIVEL]
-7. NAO resuma - transcreva fielmente
+7. NAO resuma, NAO interprete - transcreva FIELMENTE
+8. Inclua cabecalhos, rodapes, carimbos, assinaturas
 
-Texto da pagina:`
+Transcricao completa da pagina:`
 
 // Extrair texto de uma unica pagina usando Gemini
 async function extractPageText(pageBase64: string, pageNumber: number): Promise<string> {
