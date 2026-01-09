@@ -701,21 +701,88 @@ ${result.preview.content}`
     }
   }
 
-  // Extrair texto de PDF grande usando Gemini File API diretamente do frontend
+  // Extrair texto de PDF grande usando API que divide em paginas
   const extractPDFWithGeminiFileAPI = async (file: File): Promise<string> => {
+    console.log('   📤 Usando API split-extract (pagina por pagina)...')
+
+    try {
+      // Usar a nova API que divide o PDF em paginas
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('maxPages', '50') // Processar 50 paginas por vez
+
+      let fullText = ''
+      let startPage = 1
+      let hasMore = true
+      let totalPages = 0
+
+      while (hasMore) {
+        console.log(`   📄 Processando paginas a partir de ${startPage}...`)
+
+        const formDataBatch = new FormData()
+        formDataBatch.append('file', file)
+        formDataBatch.append('maxPages', '20') // 20 paginas por lote
+        formDataBatch.append('startPage', startPage.toString())
+
+        const response = await fetch('/api/pdf/split-extract', {
+          method: 'POST',
+          body: formDataBatch,
+          credentials: 'include'
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json()
+          console.error('   ❌ Erro na API:', errorData)
+          throw new Error(errorData.error || 'Erro ao processar PDF')
+        }
+
+        const data = await response.json()
+
+        if (data.success) {
+          fullText += data.text
+          totalPages = data.totalPages
+          hasMore = data.hasMore
+          startPage = data.nextStartPage || startPage + 20
+
+          console.log(`   ✅ Lote processado: ${data.processedPages} paginas, ${data.totalChars} chars`)
+          console.log(`   📊 Progresso: ${data.endPage}/${totalPages} paginas`)
+
+          // Atualizar progresso visual
+          setProcessingProgress(Math.round((data.endPage / totalPages) * 100))
+        } else {
+          throw new Error(data.error || 'Erro desconhecido')
+        }
+
+        // Pequeno delay entre lotes
+        if (hasMore) {
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
+
+      console.log(`   ✅ PDF completo: ${fullText.length} caracteres de ${totalPages} paginas`)
+      return fullText
+
+    } catch (err: any) {
+      console.error('   ❌ Erro no split-extract:', err.message)
+
+      // Fallback: tentar metodo antigo (Gemini File API direto)
+      console.log('   🔄 Tentando fallback com Gemini File API...')
+      return await extractPDFWithGeminiFileAPIFallback(file)
+    }
+  }
+
+  // Fallback: Metodo antigo usando Gemini File API diretamente
+  const extractPDFWithGeminiFileAPIFallback = async (file: File): Promise<string> => {
     const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
     if (!GEMINI_API_KEY) {
       console.error('Chave API Gemini nao configurada')
       return ''
     }
 
-    console.log('   📤 Usando Gemini File API diretamente...')
-
     try {
-      // Converter para ArrayBuffer
       const arrayBuffer = await file.arrayBuffer()
 
-      // Passo 1: Iniciar upload resumable
+      // Upload
       const startResponse = await fetch(
         `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${GEMINI_API_KEY}`,
         {
@@ -727,22 +794,15 @@ ${result.preview.content}`
             'X-Goog-Upload-Header-Content-Type': file.type,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            file: { display_name: file.name }
-          })
+          body: JSON.stringify({ file: { display_name: file.name } })
         }
       )
 
-      if (!startResponse.ok) {
-        throw new Error('Falha ao iniciar upload: ' + startResponse.status)
-      }
+      if (!startResponse.ok) throw new Error('Falha no upload')
 
       const uploadUri = startResponse.headers.get('X-Goog-Upload-URL')
-      if (!uploadUri) throw new Error('URI de upload nao recebido')
+      if (!uploadUri) throw new Error('URI nao recebido')
 
-      console.log('   📤 Upload URI obtido, enviando arquivo...')
-
-      // Passo 2: Enviar arquivo
       const uploadResponse = await fetch(uploadUri, {
         method: 'PUT',
         headers: {
@@ -753,49 +813,31 @@ ${result.preview.content}`
         body: arrayBuffer
       })
 
-      if (!uploadResponse.ok) {
-        throw new Error('Falha ao enviar arquivo: ' + uploadResponse.status)
-      }
-
       const uploadResult = await uploadResponse.json()
       const fileUri = uploadResult.file?.uri
       const filePath = uploadResult.file?.name
 
       if (!fileUri) throw new Error('URI do arquivo nao recebido')
 
-      console.log('   ✅ Arquivo enviado:', fileUri)
-
-      // Passo 3: Aguardar processamento
+      // Aguardar processamento
       let fileReady = false
       let attempts = 0
-
       while (!fileReady && attempts < 60) {
         const checkResponse = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/${filePath}?key=${GEMINI_API_KEY}`
         )
-
         if (checkResponse.ok) {
           const status = await checkResponse.json()
-          if (status.state === 'ACTIVE') {
-            fileReady = true
-            console.log('   ✅ Arquivo pronto para processamento')
-          } else if (status.state === 'FAILED') {
-            throw new Error('Processamento falhou')
-          } else {
-            await new Promise(r => setTimeout(r, 1000))
-            attempts++
-          }
-        } else {
+          if (status.state === 'ACTIVE') fileReady = true
+          else if (status.state === 'FAILED') throw new Error('Processamento falhou')
+        }
+        if (!fileReady) {
           await new Promise(r => setTimeout(r, 1000))
           attempts++
         }
       }
 
-      if (!fileReady) throw new Error('Timeout aguardando processamento')
-
-      // Passo 4: Extrair texto
-      console.log('   🔍 Extraindo texto do PDF...')
-
+      // Extrair texto
       const extractResponse = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
         {
@@ -805,66 +847,26 @@ ${result.preview.content}`
             contents: [{
               role: 'user',
               parts: [
-                {
-                  fileData: {
-                    mimeType: file.type,
-                    fileUri
-                  }
-                },
-                {
-                  text: `TAREFA CRITICA: Voce DEVE extrair o conteudo COMPLETO deste documento PDF, TODAS as paginas, sem excecao.
-
-ATENCAO: Este documento pode ter MUITAS PAGINAS. Voce DEVE processar CADA UMA DELAS.
-
-INSTRUCOES OBRIGATORIAS:
-1. PROCESSE TODAS AS PAGINAS do documento - do inicio ao fim
-2. Para CADA PAGINA, extraia TODO o texto visivel
-3. Se houver imagens escaneadas, aplique OCR e transcreva
-4. Extraia ABSOLUTAMENTE TODO o conteudo de todas as paginas
-5. MARQUE o inicio de cada pagina com: --- PAGINA X ---
-6. Preserve numeros, datas, CPFs, telefones EXATAMENTE
-7. Nomes de pessoas em MAIUSCULAS
-8. NAO RESUMA, NAO INTERPRETE - transcreva TUDO
-9. Se algo estiver ilegivel: [ILEGIVEL]
-
-IMPORTANTE: A resposta deve conter o texto COMPLETO de TODAS as paginas.
-NAO pare no meio. NAO resuma. NAO corte.
-
-Comece a transcricao COMPLETA:`
-                }
+                { fileData: { mimeType: file.type, fileUri } },
+                { text: 'Extraia TODO o texto deste PDF, TODAS as paginas. NAO resuma.' }
               ]
             }],
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: 100000 // Aumentado para documentos grandes
-            }
+            generationConfig: { temperature: 0.1, maxOutputTokens: 100000 }
           })
         }
       )
 
-      if (!extractResponse.ok) {
-        const err = await extractResponse.json()
-        throw new Error(err.error?.message || 'Erro ao extrair texto')
-      }
-
       const data = await extractResponse.json()
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
 
-      console.log('   ✅ Texto extraido:', text.length, 'caracteres')
-
-      // Passo 5: Limpar arquivo do Gemini
+      // Limpar
       try {
-        await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/${filePath}?key=${GEMINI_API_KEY}`,
-          { method: 'DELETE' }
-        )
-      } catch (e) {
-        console.warn('   ⚠️ Nao conseguiu deletar arquivo temporario')
-      }
+        await fetch(`https://generativelanguage.googleapis.com/v1beta/${filePath}?key=${GEMINI_API_KEY}`, { method: 'DELETE' })
+      } catch (e) {}
 
       return text
     } catch (err: any) {
-      console.error('   ❌ Erro no Gemini File API:', err.message)
+      console.error('Fallback tambem falhou:', err.message)
       return ''
     }
   }
