@@ -24,12 +24,8 @@ const SUPPORTED_TYPES: Record<string, string> = {
   'application/msword': 'doc',
 }
 
-// Config para permitir uploads grandes
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-}
+// No App Router, usamos route segment config ao inves de export const config
+// O FormData e parseado automaticamente pelo Next.js
 
 // Prompt para extracao
 const EXTRACTION_PROMPT = `Voce e um assistente especializado em extrair texto de documentos.
