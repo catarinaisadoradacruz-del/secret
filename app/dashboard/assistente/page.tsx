@@ -1394,9 +1394,29 @@ ${result.preview.content}`
     inputRef.current?.focus()
   }
 
+  // Estado para controlar sidebar colapsada
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  // Ref para auto-resize do textarea
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize textarea
+  const autoResizeTextarea = useCallback(() => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      textarea.style.height = 'auto'
+      const maxHeight = window.innerHeight * 0.4 // 40% da tela max
+      textarea.style.height = Math.min(textarea.scrollHeight, maxHeight) + 'px'
+    }
+  }, [])
+
+  useEffect(() => {
+    autoResizeTextarea()
+  }, [inputMessage, autoResizeTextarea])
+
   // ==================== RENDER ====================
   return (
-    <div className="flex h-[calc(100vh-120px)]">
+    <div className="flex h-[calc(100vh-64px)] overflow-hidden">
       {/* Modal de Atalhos */}
       {showShortcuts && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowShortcuts(false)}>
@@ -1455,29 +1475,29 @@ ${result.preview.content}`
         </div>
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar - Responsiva e Colapsavel */}
       {showSidebar && (
-        <div className="w-72 border-r border-border flex flex-col bg-card">
-          <div className="p-4 border-b border-border">
-            <button onClick={createNewSession} className="w-full btn-primary flex items-center justify-center gap-2">
-              <Plus className="h-4 w-4" /> Nova Conversa
+        <div className={`${sidebarCollapsed ? 'w-0 overflow-hidden' : 'w-64 md:w-56 lg:w-64'} border-r border-border flex flex-col bg-card transition-all duration-300 flex-shrink-0`}>
+          <div className="p-2 border-b border-border">
+            <button onClick={createNewSession} className="w-full btn-primary flex items-center justify-center gap-2 py-2 text-sm">
+              <Plus className="h-3.5 w-3.5" /> Nova Conversa
             </button>
           </div>
 
           <div className="flex-1 overflow-y-auto">
             {loadingSessions ? (
-              <div className="flex justify-center p-4"><Loader2 className="h-5 w-5 animate-spin" /></div>
+              <div className="flex justify-center p-3"><Loader2 className="h-4 w-4 animate-spin" /></div>
             ) : sessions.length === 0 ? (
-              <div className="p-4 text-center text-muted-foreground text-sm">Nenhuma conversa</div>
+              <div className="p-3 text-center text-muted-foreground text-xs">Nenhuma conversa</div>
             ) : (
-              <div className="space-y-1 p-2">
+              <div className="space-y-0.5 p-1.5">
                 {sessions.map((session) => (
                   <div
                     key={session.id}
-                    className={`group flex items-center gap-2 p-3 rounded-lg cursor-pointer transition-colors ${currentSession?.id === session.id ? 'bg-primary/20 text-primary' : 'hover:bg-secondary'}`}
+                    className={`group flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${currentSession?.id === session.id ? 'bg-primary/20 text-primary' : 'hover:bg-secondary'}`}
                     onClick={() => loadSession(session)}
                   >
-                    <MessageSquare className="h-4 w-4 flex-shrink-0" />
+                    <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       {editingSessionId === session.id ? (
                         <input
@@ -1487,22 +1507,22 @@ ${result.preview.content}`
                           onBlur={() => saveSessionTitle(session.id)}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveSessionTitle(session.id); if (e.key === 'Escape') setEditingSessionId(null) }}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full bg-background border border-primary rounded px-2 py-1 text-sm"
+                          className="w-full bg-background border border-primary rounded px-1.5 py-0.5 text-xs"
                           autoFocus
                         />
                       ) : (
                         <>
-                          <p className="text-sm font-medium truncate">{session.titulo}</p>
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
+                          <p className="text-xs font-medium truncate">{session.titulo}</p>
+                          <p className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+                            <Clock className="h-2.5 w-2.5" />
                             {new Date(session.updated_at).toLocaleDateString('pt-BR')}
                           </p>
                         </>
                       )}
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button onClick={(e) => startEditingSession(session, e)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-primary/20 text-primary"><Pencil className="h-3.5 w-3.5" /></button>
-                      <button onClick={(e) => { e.stopPropagation(); deleteSession(session.id) }} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/20 text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <div className="flex items-center gap-0.5">
+                      <button onClick={(e) => startEditingSession(session, e)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-primary/20 text-primary"><Pencil className="h-3 w-3" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); deleteSession(session.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-500/20 text-red-400"><Trash2 className="h-3 w-3" /></button>
                     </div>
                   </div>
                 ))}
@@ -1513,44 +1533,56 @@ ${result.preview.content}`
       )}
 
       {/* Area Principal */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setShowSidebar(!showSidebar)} className="p-2 rounded-lg hover:bg-secondary">
-              <MessageSquare className="h-5 w-5" />
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header - Compacto */}
+        <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Botao Toggle Sidebar */}
+            <button
+              onClick={() => {
+                if (showSidebar) {
+                  setSidebarCollapsed(!sidebarCollapsed)
+                } else {
+                  setShowSidebar(true)
+                  setSidebarCollapsed(false)
+                }
+              }}
+              className="p-1.5 rounded-lg hover:bg-secondary flex-shrink-0"
+              title={sidebarCollapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+            >
+              <MessageSquare className="h-4 w-4" />
             </button>
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center">
-                <Brain className="h-5 w-5 text-white" />
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center flex-shrink-0">
+                <Brain className="h-4 w-4 text-white" />
               </div>
-              <div>
-                <h1 className="font-semibold">{currentSession?.titulo || 'Assistente PCGO'}</h1>
-                <p className="text-xs text-muted-foreground">{tiposDocumento.find(t => t.id === tipoDocumento)?.nome}</p>
+              <div className="min-w-0">
+                <h1 className="text-sm font-semibold truncate">{currentSession?.titulo || 'Assistente PCGO'}</h1>
+                <p className="text-[10px] text-muted-foreground truncate">{tiposDocumento.find(t => t.id === tipoDocumento)?.nome}</p>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <select value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)} className="input-field pr-8 text-sm min-w-[160px]">
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <select value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)} className="input-field pr-6 text-xs py-1.5 min-w-[120px] hidden sm:block">
               {tiposDocumento.map((tipo) => (<option key={tipo.id} value={tipo.id}>{tipo.nome}</option>))}
             </select>
 
             {currentSession && sessionAttachments.length > 0 && (
-              <button onClick={() => setShowAttachments(!showAttachments)} className={`p-2 rounded-lg relative ${showAttachments ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`}>
-                <Paperclip className="h-5 w-5" />
-                <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-4 h-4 flex items-center justify-center">{sessionAttachments.length}</span>
+              <button onClick={() => setShowAttachments(!showAttachments)} className={`p-1.5 rounded-lg relative ${showAttachments ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`}>
+                <Paperclip className="h-4 w-4" />
+                <span className="absolute -top-0.5 -right-0.5 bg-primary text-primary-foreground text-[10px] rounded-full w-3.5 h-3.5 flex items-center justify-center">{sessionAttachments.length}</span>
               </button>
             )}
 
             {documentContexts.length > 0 && (
               <button
                 onClick={() => setShowDocumentPanel(!showDocumentPanel)}
-                className={`p-2 rounded-lg relative ${showDocumentPanel ? 'bg-green-500 text-white' : 'hover:bg-secondary text-green-400'}`}
+                className={`p-1.5 rounded-lg relative ${showDocumentPanel ? 'bg-green-500 text-white' : 'hover:bg-secondary text-green-400'}`}
                 title="Documentos Carregados"
               >
-                <FileText className="h-5 w-5" />
-                <span className="absolute -top-1 -right-1 bg-green-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                <FileText className="h-4 w-4" />
+                <span className="absolute -top-0.5 -right-0.5 bg-green-500 text-white text-[10px] rounded-full w-3.5 h-3.5 flex items-center justify-center">
                   {documentContexts.length}
                 </span>
               </button>
@@ -1558,26 +1590,26 @@ ${result.preview.content}`
 
             {currentSession && messages.length > 0 && (
               <>
-                <button onClick={clearConversation} className="p-2 rounded-lg hover:bg-red-500/20 text-red-400" title="Limpar"><Eraser className="h-5 w-5" /></button>
-                <div className="relative">
-                  <button onClick={() => setShowTemplates(false)} className="p-2 rounded-lg hover:bg-secondary group">
-                    <FileDown className="h-5 w-5" />
+                <button onClick={clearConversation} className="p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 hidden sm:block" title="Limpar"><Eraser className="h-4 w-4" /></button>
+                <div className="relative group hidden sm:block">
+                  <button className="p-1.5 rounded-lg hover:bg-secondary">
+                    <FileDown className="h-4 w-4" />
                   </button>
-                  <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-lg hidden group-hover:block">
-                    <button onClick={() => exportConversation('txt')} className="block w-full px-4 py-2 text-sm hover:bg-secondary text-left">Exportar TXT</button>
-                    <button onClick={() => exportConversation('html')} className="block w-full px-4 py-2 text-sm hover:bg-secondary text-left">Exportar HTML</button>
-                    <button onClick={() => exportConversation('pdf')} className="block w-full px-4 py-2 text-sm hover:bg-secondary text-left">Exportar PDF</button>
+                  <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-lg hidden group-hover:block z-20">
+                    <button onClick={() => exportConversation('txt')} className="block w-full px-3 py-1.5 text-xs hover:bg-secondary text-left whitespace-nowrap">Exportar TXT</button>
+                    <button onClick={() => exportConversation('html')} className="block w-full px-3 py-1.5 text-xs hover:bg-secondary text-left whitespace-nowrap">Exportar HTML</button>
+                    <button onClick={() => exportConversation('pdf')} className="block w-full px-3 py-1.5 text-xs hover:bg-secondary text-left whitespace-nowrap">Exportar PDF</button>
                   </div>
                 </div>
               </>
             )}
 
-            <button onClick={() => setShowSearch(true)} className="p-2 rounded-lg hover:bg-secondary" title="Buscar (Ctrl+K)"><Search className="h-5 w-5" /></button>
-            <button onClick={() => setShowConfig(!showConfig)} className="p-2 rounded-lg hover:bg-secondary"><Settings className="h-5 w-5" /></button>
-            <button onClick={() => setShowShortcuts(true)} className="p-2 rounded-lg hover:bg-secondary" title="Atalhos (Ctrl+/)"><Keyboard className="h-5 w-5" /></button>
+            <button onClick={() => setShowSearch(true)} className="p-1.5 rounded-lg hover:bg-secondary" title="Buscar (Ctrl+K)"><Search className="h-4 w-4" /></button>
+            <button onClick={() => setShowConfig(!showConfig)} className="p-1.5 rounded-lg hover:bg-secondary hidden sm:block"><Settings className="h-4 w-4" /></button>
+            <button onClick={() => setShowShortcuts(true)} className="p-1.5 rounded-lg hover:bg-secondary hidden md:block" title="Atalhos (Ctrl+/)"><Keyboard className="h-4 w-4" /></button>
 
             {documentoAtual && (
-              <button onClick={() => setShowDocPreview(!showDocPreview)} className={`p-2 rounded-lg ${showDocPreview ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`}><Eye className="h-5 w-5" /></button>
+              <button onClick={() => setShowDocPreview(!showDocPreview)} className={`p-1.5 rounded-lg ${showDocPreview ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`}><Eye className="h-4 w-4" /></button>
             )}
           </div>
         </div>
@@ -1772,28 +1804,28 @@ ${result.preview.content}`
               )}
 
               {messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center">
-                  <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-600/20 flex items-center justify-center mb-4">
-                    <Brain className="h-10 w-10 text-primary" />
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <div className="w-14 h-14 md:w-16 md:h-16 rounded-xl bg-gradient-to-br from-purple-500/20 to-blue-600/20 flex items-center justify-center mb-3">
+                    <Brain className="h-7 w-7 md:h-8 md:w-8 text-primary" />
                   </div>
-                  <h2 className="text-xl font-semibold mb-2">Assistente PCGO</h2>
-                  <p className="text-muted-foreground max-w-md mb-6">
+                  <h2 className="text-base md:text-lg font-semibold mb-1">Assistente PCGO</h2>
+                  <p className="text-muted-foreground text-xs md:text-sm max-w-sm mb-4">
                     Analise de RAI, relatos, RELINT, representacoes e muito mais. Envie arquivos, imagens e documentos.
                   </p>
 
                   {/* Templates rapidos */}
-                  <div className="flex flex-wrap gap-2 justify-center mb-6">
+                  <div className="flex flex-wrap gap-1.5 justify-center mb-4">
                     {quickTemplates.slice(0, 4).map((t, i) => (
-                      <button key={i} onClick={() => applyTemplate(t)} className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 rounded-full text-sm flex items-center gap-1">
-                        <Zap className="h-3 w-3" /> {t.label}
+                      <button key={i} onClick={() => applyTemplate(t)} className="px-2.5 py-1 bg-secondary hover:bg-secondary/80 rounded-full text-xs flex items-center gap-1">
+                        <Zap className="h-2.5 w-2.5" /> {t.label}
                       </button>
                     ))}
                   </div>
 
-                  <div className="flex gap-3">
-                    <button onClick={createNewSession} className="btn-primary">Iniciar Conversa</button>
-                    <button onClick={() => fileInputRef.current?.click()} className="btn-secondary flex items-center gap-2">
-                      <Upload className="h-4 w-4" /> Enviar Arquivo
+                  <div className="flex gap-2">
+                    <button onClick={createNewSession} className="btn-primary text-sm py-2 px-4">Iniciar Conversa</button>
+                    <button onClick={() => fileInputRef.current?.click()} className="btn-secondary flex items-center gap-1.5 text-sm py-2 px-3">
+                      <Upload className="h-3.5 w-3.5" /> Enviar Arquivo
                     </button>
                   </div>
                 </div>
@@ -1910,27 +1942,27 @@ ${result.preview.content}`
               )}
             </div>
 
-            {/* Input Area */}
-            <div className="p-4 border-t border-border">
+            {/* Input Area - Compacta e Expansivel */}
+            <div className="p-2 md:p-3 border-t border-border">
               {error && (
-                <div className="mb-3 bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4" />
-                    <span>{error}</span>
+                <div className="mb-2 bg-red-500/10 border border-red-500/30 text-red-400 px-2 py-1.5 rounded-lg text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="truncate">{error}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {retryCount > 0 && <span className="text-xs">Tentativa {retryCount}/{maxRetries}</span>}
-                    <button onClick={() => setError('')}><X className="h-4 w-4" /></button>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {retryCount > 0 && <span className="text-[10px]">Tentativa {retryCount}/{maxRetries}</span>}
+                    <button onClick={() => setError('')}><X className="h-3.5 w-3.5" /></button>
                   </div>
                 </div>
               )}
 
               {/* Templates */}
               {showTemplates && (
-                <div className="mb-3 flex flex-wrap gap-2">
+                <div className="mb-2 flex flex-wrap gap-1.5">
                   {quickTemplates.map((t, i) => (
-                    <button key={i} onClick={() => applyTemplate(t)} className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 rounded-full text-sm flex items-center gap-1">
-                      <Zap className="h-3 w-3" /> {t.label}
+                    <button key={i} onClick={() => applyTemplate(t)} className="px-2 py-1 bg-secondary hover:bg-secondary/80 rounded-full text-xs flex items-center gap-1">
+                      <Zap className="h-2.5 w-2.5" /> {t.label}
                     </button>
                   ))}
                 </div>
@@ -1938,41 +1970,49 @@ ${result.preview.content}`
 
               {/* Pending files with preview */}
               {pendingFiles.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2">
+                <div className="mb-2 flex flex-wrap gap-1.5">
                   {pendingFiles.map((file, idx) => (
-                    <div key={idx} className="flex items-center gap-2 bg-secondary px-3 py-1.5 rounded-lg">
+                    <div key={idx} className="flex items-center gap-1.5 bg-secondary px-2 py-1 rounded-lg">
                       {pendingPreviews[idx] ? (
-                        <img src={pendingPreviews[idx]} alt={file.name} className="h-8 w-8 object-cover rounded" />
+                        <img src={pendingPreviews[idx]} alt={file.name} className="h-6 w-6 object-cover rounded" />
                       ) : (
-                        getFileIcon(file.type)
+                        <span className="h-4 w-4">{getFileIcon(file.type)}</span>
                       )}
-                      <span className="text-sm truncate max-w-[150px]">{file.name}</span>
+                      <span className="text-xs truncate max-w-[100px]">{file.name}</span>
                       <button onClick={() => removePendingFile(idx)} className="text-muted-foreground hover:text-foreground">
-                        <X className="h-4 w-4" />
+                        <X className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   ))}
                 </div>
               )}
 
-              <div className="flex gap-2">
+              <div className="flex gap-1.5 items-end">
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} multiple accept="image/*,.pdf,.doc,.docx,.txt,.xls,.xlsx" className="hidden" />
 
-                <button onClick={() => fileInputRef.current?.click()} className="p-3 rounded-xl hover:bg-secondary border border-border" title="Anexar">
-                  <Paperclip className="h-5 w-5 text-muted-foreground" />
+                <button onClick={() => fileInputRef.current?.click()} className="p-2 rounded-lg hover:bg-secondary border border-border flex-shrink-0" title="Anexar">
+                  <Paperclip className="h-4 w-4 text-muted-foreground" />
                 </button>
 
-                <button onClick={() => setShowTemplates(!showTemplates)} className={`p-3 rounded-xl border border-border ${showTemplates ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`} title="Templates">
-                  <Zap className="h-5 w-5" />
+                <button onClick={() => setShowTemplates(!showTemplates)} className={`p-2 rounded-lg border border-border flex-shrink-0 ${showTemplates ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`} title="Templates">
+                  <Zap className="h-4 w-4" />
                 </button>
 
+                {/* Textarea Expansivel */}
                 <textarea
-                  ref={inputRef}
+                  ref={(el) => {
+                    inputRef.current = el
+                    if (textareaRef) textareaRef.current = el
+                  }}
                   value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
+                  onChange={(e) => {
+                    setInputMessage(e.target.value)
+                    autoResizeTextarea()
+                  }}
                   onKeyDown={handleKeyDown}
                   placeholder="Digite sua mensagem... (Enter para enviar, Shift+Enter para nova linha)"
-                  className="input-field flex-1 resize-none min-h-[48px] max-h-[200px]"
+                  className="input-field flex-1 resize-none text-sm py-2 px-3 min-h-[40px] overflow-y-auto"
+                  style={{ maxHeight: '40vh' }}
                   rows={1}
                   disabled={loading}
                 />
@@ -1980,9 +2020,9 @@ ${result.preview.content}`
                 <button
                   onClick={() => sendMessage()}
                   disabled={loading || (!inputMessage.trim() && pendingFiles.length === 0)}
-                  className="btn-primary px-4 disabled:opacity-50"
+                  className="btn-primary p-2.5 rounded-lg disabled:opacity-50 flex-shrink-0"
                 >
-                  {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </button>
               </div>
             </div>
