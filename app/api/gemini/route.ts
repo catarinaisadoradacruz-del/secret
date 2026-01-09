@@ -621,20 +621,55 @@ INSTRUCOES:
     }
 
     // Verificar se ha anexos no contexto
+    let hasBase64Files = false
+    const base64Files: Array<{ mimeType: string; data: string; name: string }> = []
+
     if (context?.anexos && context.anexos.length > 0) {
       fullPrompt += '\n\n--- ARQUIVOS ANEXADOS ---\n'
       for (const anexo of context.anexos) {
         if (anexo.conteudo) {
-          fullPrompt += `\n[${anexo.nome} (${anexo.tipo})]:\n${anexo.conteudo}\n`
+          // Verificar se e base64 (formato: [BASE64:mime:data])
+          const base64Match = anexo.conteudo.match(/^\[BASE64:([^:]+):(.+)\]$/)
+          if (base64Match) {
+            hasBase64Files = true
+            base64Files.push({
+              mimeType: base64Match[1],
+              data: base64Match[2],
+              name: anexo.nome
+            })
+            fullPrompt += `\n[${anexo.nome}]: Arquivo binario anexado para processamento\n`
+          } else {
+            fullPrompt += `\n[${anexo.nome} (${anexo.tipo})]:\n${anexo.conteudo}\n`
+          }
         }
       }
       fullPrompt += '\n--- FIM DOS ANEXOS ---'
     }
 
+    // Construir parts da mensagem
+    const userParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = []
+
+    // Se tem arquivos base64, adicionar como inlineData primeiro
+    if (hasBase64Files) {
+      for (const file of base64Files) {
+        userParts.push({
+          inlineData: {
+            mimeType: file.mimeType,
+            data: file.data
+          }
+        })
+      }
+      // Adicionar instrucao para processar os arquivos
+      fullPrompt = `IMPORTANTE: Voce recebeu ${base64Files.length} arquivo(s) anexado(s). Extraia e analise TODO o conteudo dos arquivos.\n\n` + fullPrompt
+    }
+
+    // Adicionar o texto do prompt
+    userParts.push({ text: fullPrompt })
+
     // Adicionar a nova mensagem do usuario
     messages.push({
       role: 'user',
-      parts: [{ text: fullPrompt }]
+      parts: userParts
     })
 
     // Chamar API do Gemini

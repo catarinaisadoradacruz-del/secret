@@ -3,26 +3,28 @@ const https = require('https');
 const SUPABASE_URL = 'https://qlxabxhszpvetblvnfxl.supabase.co';
 const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFseGFieGhzenB2ZXRibHZuZnhsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Nzc5NzMyNSwiZXhwIjoyMDgzMzczMzI1fQ.8JOJnLml2uzDSLjUuWIprZpTADo_TnfqgblcELm2GYo';
 
-async function runSQL(sql) {
+async function checkTable(tableName) {
   return new Promise((resolve, reject) => {
-    const url = new URL(`${SUPABASE_URL}/rest/v1/rpc/exec_sql`);
-
     const options = {
-      hostname: url.hostname,
-      path: '/rest/v1/',
-      method: 'POST',
+      hostname: 'qlxabxhszpvetblvnfxl.supabase.co',
+      path: `/rest/v1/${tableName}?select=id&limit=1`,
+      method: 'GET',
       headers: {
-        'Content-Type': 'application/json',
         'apikey': SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
-        'Prefer': 'return=minimal'
+        'Authorization': `Bearer ${SERVICE_ROLE_KEY}`
       }
     };
 
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve({ status: res.statusCode, data }));
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          resolve({ exists: true, data: JSON.parse(data) });
+        } else {
+          resolve({ exists: false, error: data });
+        }
+      });
     });
 
     req.on('error', reject);
@@ -30,24 +32,8 @@ async function runSQL(sql) {
   });
 }
 
-async function createTable(tableName, columns) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?select=id&limit=1`, {
-    headers: {
-      'apikey': SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SERVICE_ROLE_KEY}`
-    }
-  });
-
-  if (response.status === 404 || response.status === 400) {
-    console.log(`Tabela ${tableName} não existe.`);
-    return false;
-  }
-  console.log(`Tabela ${tableName} já existe.`);
-  return true;
-}
-
 async function main() {
-  console.log('Verificando tabelas existentes...\n');
+  console.log('=== Verificando tabelas do PCGO Sistema ===\n');
 
   const tables = [
     'investigations',
@@ -56,24 +42,43 @@ async function main() {
     'alvo_enderecos',
     'alvo_passagens',
     'alvo_veiculos',
-    'rai_analises',
     'documentos',
     'unidades',
     'phone_records',
     'operacoes',
     'forensic_images',
-    'relatos_pc'
+    'rai_analises',
+    'relatos_pc',
+    'chat_sessions',
+    'chat_messages'
   ];
 
+  const missing = [];
+  const existing = [];
+
   for (const table of tables) {
-    await createTable(table);
+    const result = await checkTable(table);
+    if (result.exists) {
+      console.log(`[OK] ${table}`);
+      existing.push(table);
+    } else {
+      console.log(`[FALTA] ${table}`);
+      missing.push(table);
+    }
   }
 
-  console.log('\n========================================');
-  console.log('IMPORTANTE: Execute o script SQL manualmente');
-  console.log('no Supabase Dashboard > SQL Editor:');
-  console.log('scripts/setup-database.sql');
-  console.log('========================================\n');
+  console.log('\n=== Resumo ===');
+  console.log(`Tabelas existentes: ${existing.length}`);
+  console.log(`Tabelas faltando: ${missing.length}`);
+
+  if (missing.length > 0) {
+    console.log('\n!!! ACAO NECESSARIA !!!');
+    console.log('Execute o arquivo scripts/setup-database-simples.sql no Supabase SQL Editor:');
+    console.log('https://supabase.com/dashboard/project/qlxabxhszpvetblvnfxl/sql/new');
+    console.log('\nTabelas que precisam ser criadas:', missing.join(', '));
+  } else {
+    console.log('\nTodas as tabelas estao configuradas corretamente!');
+  }
 }
 
 main().catch(console.error);

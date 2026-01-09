@@ -408,5 +408,51 @@ CREATE INDEX IF NOT EXISTS idx_operacoes_investigation ON operacoes(investigatio
 CREATE INDEX IF NOT EXISTS idx_forensic_images_investigation ON forensic_images(investigation_id);
 
 -- =====================================================
+-- TABELA: chat_sessions (Sessões de Chat com IA)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  investigation_id UUID REFERENCES investigations(id) ON DELETE SET NULL,
+  titulo TEXT NOT NULL DEFAULT 'Nova Conversa',
+  tipo TEXT DEFAULT 'geral', -- geral, relint, relatorio, representacao, levantamento
+  documento_em_construcao JSONB, -- Estrutura do documento sendo construído
+  status TEXT DEFAULT 'ativo', -- ativo, arquivado
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- RLS para chat_sessions
+ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own chat_sessions" ON chat_sessions
+  FOR ALL USING (auth.uid() IS NOT NULL);
+
+-- =====================================================
+-- TABELA: chat_messages (Mensagens do Chat)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_id UUID REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  role TEXT NOT NULL, -- user, assistant
+  content TEXT NOT NULL,
+  tipo_acao TEXT, -- analise_rai, relato_pc, gerar_documento, 5w2h, editar_documento
+  metadata JSONB, -- Dados extras (tipo de documento, seção editada, etc)
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- RLS para chat_messages
+ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage chat_messages" ON chat_messages
+  FOR ALL USING (auth.uid() IS NOT NULL);
+
+-- Índices para chat
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(created_by);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_investigation ON chat_sessions(investigation_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at);
+
+-- =====================================================
 -- FIM DO SCRIPT
 -- =====================================================

@@ -447,75 +447,73 @@ export default function AssistentePage() {
         console.log(`   Tipo: ${file.type}`)
         console.log(`   Tamanho: ${(file.size / 1024 / 1024).toFixed(2)} MB`)
 
-        // NOVA API UNIFICADA - processa qualquer tipo de arquivo
-        try {
-          const formData = new FormData()
-          formData.append('file', file)
+        // Limite do Vercel Serverless = 4.5MB
+        // Para arquivos maiores, marcar para enviar base64 direto ao Gemini
+        const VERCEL_LIMIT = 4.5 * 1024 * 1024
 
-          console.log('   Chamando /api/files/process...')
-          const processResponse = await fetch('/api/files/process', {
-            method: 'POST',
-            body: formData,
-            credentials: 'include'
-          })
+        if (file.size > VERCEL_LIMIT) {
+          console.log('   ⚠️ Arquivo maior que 4.5MB - sera enviado direto ao Gemini')
+          // Nao tenta chamar API - vai direto como base64
+          conteudoExtraido = '' // Sera tratado como base64 abaixo
+        } else {
+          // Arquivo pequeno - tentar API
+          try {
+            const formData = new FormData()
+            formData.append('file', file)
 
-          if (processResponse.ok) {
-            const result = await processResponse.json()
-            if (result.success && result.data) {
-              conteudoExtraido = result.data.text || ''
-              isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
-              console.log(`   ✅ Sucesso: ${result.data.charCount} caracteres via ${result.data.processingMethod}`)
+            console.log('   Chamando /api/files/process...')
+            const processResponse = await fetch('/api/files/process', {
+              method: 'POST',
+              body: formData,
+              credentials: 'include'
+            })
+
+            if (processResponse.ok) {
+              const result = await processResponse.json()
+              if (result.success && result.data) {
+                conteudoExtraido = result.data.text || ''
+                isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
+                console.log(`   ✅ Sucesso: ${result.data.charCount} caracteres via ${result.data.processingMethod}`)
+              } else {
+                console.error('   ❌ API retornou erro:', result.error)
+              }
             } else {
-              console.error('   ❌ API retornou erro:', result.error)
+              console.error(`   ❌ Erro HTTP ${processResponse.status}`)
             }
-          } else {
-            const errorText = await processResponse.text()
-            console.error(`   ❌ Erro HTTP ${processResponse.status}:`, errorText)
-
-            // FALLBACK: Tentar APIs especificas
-            console.log('   🔄 Tentando fallback...')
-
-            if (file.type.startsWith('image/')) {
-              // Fallback para imagens
-              try {
-                const ocrText = await runOCROnImage(base64, file.type)
-                conteudoExtraido = ocrText
-                console.log('   ✅ Fallback OCR sucesso')
-              } catch (e) {
-                console.error('   ❌ Fallback OCR falhou:', e)
-              }
-            } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-              // Fallback para PDFs via API antiga
-              try {
-                const pdfFormData = new FormData()
-                pdfFormData.append('file', file)
-
-                const pdfResponse = await fetch('/api/pdf/extract', {
-                  method: 'POST',
-                  body: pdfFormData,
-                  credentials: 'include'
-                })
-
-                if (pdfResponse.ok) {
-                  const pdfData = await pdfResponse.json()
-                  conteudoExtraido = pdfData.text || ''
-                  console.log('   ✅ Fallback PDF sucesso')
-                }
-              } catch (e) {
-                console.error('   ❌ Fallback PDF falhou:', e)
-              }
-            } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-              // Fallback para texto
-              conteudoExtraido = await file.text()
-              console.log('   ✅ Fallback texto sucesso')
-            }
+          } catch (err) {
+            console.error('   ❌ Erro no processamento:', err)
           }
-        } catch (err) {
-          console.error('   ❌ Erro no processamento:', err)
+        }
 
-          // Ultimo recurso: ler texto diretamente se possivel
-          if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+        // Se nao extraiu texto (arquivo grande ou API falhou), tentar fallbacks
+        if (!conteudoExtraido) {
+          console.log('   🔄 Tentando fallbacks...')
+
+          if (file.type.startsWith('image/')) {
+            // OCR para imagens
+            try {
+              const ocrText = await runOCROnImage(base64, file.type)
+              conteudoExtraido = ocrText
+              console.log('   ✅ OCR sucesso')
+            } catch (e) {
+              console.error('   ❌ OCR falhou:', e)
+            }
+          } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+            // Texto direto
             conteudoExtraido = await file.text()
+            console.log('   ✅ Texto lido direto')
+          } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+            // PDF grande - usar Gemini File API diretamente do frontend
+            console.log('   📤 PDF grande detectado, usando Gemini File API...')
+            try {
+              conteudoExtraido = await extractPDFWithGeminiFileAPI(file)
+              if (conteudoExtraido) {
+                console.log('   ✅ PDF extraido via File API:', conteudoExtraido.length, 'caracteres')
+                isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
+              }
+            } catch (e) {
+              console.error('   ❌ Gemini File API falhou:', e)
+            }
           }
         }
 
@@ -539,6 +537,11 @@ ${result.preview.content}`
           }
         }
 
+        // Se nao conseguiu extrair texto, guardar o base64 para enviar direto ao Gemini
+        const finalContent = conteudoExtraido || `[BASE64:${file.type}:${base64}]`
+
+        console.log(`   📝 Conteudo final: ${conteudoExtraido ? conteudoExtraido.length + ' caracteres de texto' : 'base64 para processamento direto'}`)
+
         const { data: attachment, error } = await supabase
           .from('chat_attachments')
           .insert({
@@ -547,16 +550,33 @@ ${result.preview.content}`
             tipo_arquivo: file.type.split('/')[0],
             tamanho: file.size,
             mime_type: file.type,
-            conteudo_extraido: conteudoExtraido,
-            metadata: { base64Preview: base64Data.substring(0, 500) }
+            conteudo_extraido: finalContent,
+            metadata: {
+              base64Preview: base64Data.substring(0, 500),
+              hasExtractedText: !!conteudoExtraido,
+              extractedLength: conteudoExtraido?.length || 0
+            }
           })
           .select()
           .single()
 
-        if (error) throw error
-        uploadedAttachments.push(attachment)
+        if (error) {
+          console.error('   ❌ Erro ao salvar no Supabase:', error)
+          // Mesmo com erro, criar attachment local para enviar ao Gemini
+          uploadedAttachments.push({
+            id: crypto.randomUUID(),
+            nome_arquivo: file.name,
+            tipo_arquivo: file.type.split('/')[0],
+            tamanho: file.size,
+            mime_type: file.type,
+            conteudo_extraido: finalContent,
+            created_at: new Date().toISOString()
+          } as ChatAttachment)
+        } else {
+          uploadedAttachments.push(attachment)
+        }
       } catch (err) {
-        console.error('Erro ao processar arquivo:', file.name, err)
+        console.error('❌ Erro ao processar arquivo:', file.name, err)
       }
     }
 
@@ -677,6 +697,168 @@ ${result.preview.content}`
       return data.text || ''
     } catch (err) {
       console.error('Erro no OCR:', err)
+      return ''
+    }
+  }
+
+  // Extrair texto de PDF grande usando Gemini File API diretamente do frontend
+  const extractPDFWithGeminiFileAPI = async (file: File): Promise<string> => {
+    const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
+    if (!GEMINI_API_KEY) {
+      console.error('Chave API Gemini nao configurada')
+      return ''
+    }
+
+    console.log('   📤 Usando Gemini File API diretamente...')
+
+    try {
+      // Converter para ArrayBuffer
+      const arrayBuffer = await file.arrayBuffer()
+
+      // Passo 1: Iniciar upload resumable
+      const startResponse = await fetch(
+        `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: {
+            'X-Goog-Upload-Protocol': 'resumable',
+            'X-Goog-Upload-Command': 'start',
+            'X-Goog-Upload-Header-Content-Length': file.size.toString(),
+            'X-Goog-Upload-Header-Content-Type': file.type,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            file: { display_name: file.name }
+          })
+        }
+      )
+
+      if (!startResponse.ok) {
+        throw new Error('Falha ao iniciar upload: ' + startResponse.status)
+      }
+
+      const uploadUri = startResponse.headers.get('X-Goog-Upload-URL')
+      if (!uploadUri) throw new Error('URI de upload nao recebido')
+
+      console.log('   📤 Upload URI obtido, enviando arquivo...')
+
+      // Passo 2: Enviar arquivo
+      const uploadResponse = await fetch(uploadUri, {
+        method: 'PUT',
+        headers: {
+          'Content-Length': file.size.toString(),
+          'X-Goog-Upload-Offset': '0',
+          'X-Goog-Upload-Command': 'upload, finalize'
+        },
+        body: arrayBuffer
+      })
+
+      if (!uploadResponse.ok) {
+        throw new Error('Falha ao enviar arquivo: ' + uploadResponse.status)
+      }
+
+      const uploadResult = await uploadResponse.json()
+      const fileUri = uploadResult.file?.uri
+      const filePath = uploadResult.file?.name
+
+      if (!fileUri) throw new Error('URI do arquivo nao recebido')
+
+      console.log('   ✅ Arquivo enviado:', fileUri)
+
+      // Passo 3: Aguardar processamento
+      let fileReady = false
+      let attempts = 0
+
+      while (!fileReady && attempts < 60) {
+        const checkResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/${filePath}?key=${GEMINI_API_KEY}`
+        )
+
+        if (checkResponse.ok) {
+          const status = await checkResponse.json()
+          if (status.state === 'ACTIVE') {
+            fileReady = true
+            console.log('   ✅ Arquivo pronto para processamento')
+          } else if (status.state === 'FAILED') {
+            throw new Error('Processamento falhou')
+          } else {
+            await new Promise(r => setTimeout(r, 1000))
+            attempts++
+          }
+        } else {
+          await new Promise(r => setTimeout(r, 1000))
+          attempts++
+        }
+      }
+
+      if (!fileReady) throw new Error('Timeout aguardando processamento')
+
+      // Passo 4: Extrair texto
+      console.log('   🔍 Extraindo texto do PDF...')
+
+      const extractResponse = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [
+                {
+                  fileData: {
+                    mimeType: file.type,
+                    fileUri
+                  }
+                },
+                {
+                  text: `TAREFA: Extraia TODO o conteudo deste documento PDF.
+
+INSTRUCOES:
+1. Extraia ABSOLUTAMENTE TODO o texto visivel
+2. Se houver imagens escaneadas, aplique OCR
+3. Mantenha a estrutura original (titulos, paragrafos, listas, tabelas)
+4. Tabelas devem ser formatadas com | para separar colunas
+5. Preserve numeros, datas, CPFs, telefones EXATAMENTE como aparecem
+6. Nomes de pessoas devem ficar em MAIUSCULAS
+7. NAO resuma - transcreva fielmente
+8. Marque partes ilegiveis como [ILEGIVEL]
+
+Comece a transcricao:`
+                }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 65536
+            }
+          })
+        }
+      )
+
+      if (!extractResponse.ok) {
+        const err = await extractResponse.json()
+        throw new Error(err.error?.message || 'Erro ao extrair texto')
+      }
+
+      const data = await extractResponse.json()
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+
+      console.log('   ✅ Texto extraido:', text.length, 'caracteres')
+
+      // Passo 5: Limpar arquivo do Gemini
+      try {
+        await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/${filePath}?key=${GEMINI_API_KEY}`,
+          { method: 'DELETE' }
+        )
+      } catch (e) {
+        console.warn('   ⚠️ Nao conseguiu deletar arquivo temporario')
+      }
+
+      return text
+    } catch (err: any) {
+      console.error('   ❌ Erro no Gemini File API:', err.message)
       return ''
     }
   }
