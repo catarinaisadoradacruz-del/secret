@@ -469,19 +469,37 @@ export default function AssistentePage() {
           isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
         } else if (file.type === 'application/pdf') {
           try {
-            const pdfResponse = await fetch('/api/gemini', {
+            // Usar nova API que suporta PDFs grandes via File API do Gemini
+            const formData = new FormData()
+            formData.append('file', file)
+
+            const pdfResponse = await fetch('/api/pdf/extract', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                prompt: 'Extraia todo o texto deste documento PDF.',
-                type: 'pdf_extract',
-                fileData: { mimeType: file.type, data: base64, name: file.name }
-              })
+              body: formData
             })
+
             if (pdfResponse.ok) {
               const pdfData = await pdfResponse.json()
-              conteudoExtraido = pdfData.response || ''
+              conteudoExtraido = pdfData.text || ''
               isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
+              console.log('PDF extraido: ' + pdfData.charCount + ' caracteres')
+            } else {
+              // Fallback para API antiga em caso de erro
+              console.error('Erro na nova API, tentando fallback...')
+              const fallbackResponse = await fetch('/api/gemini', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  prompt: 'Extraia todo o texto deste documento PDF.',
+                  type: 'pdf_extract',
+                  fileData: { mimeType: file.type, data: base64, name: file.name }
+                })
+              })
+              if (fallbackResponse.ok) {
+                const fallbackData = await fallbackResponse.json()
+                conteudoExtraido = fallbackData.response || ''
+                isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
+              }
             }
           } catch (err) {
             console.error('Erro ao processar PDF:', err)
