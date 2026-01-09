@@ -93,6 +93,7 @@ interface ChatSession {
 // ==================== CONSTANTES ====================
 const tiposDocumento = [
   { id: 'general', nome: 'Assistente Geral', icon: Brain },
+  { id: 'IP_PASSIVO', nome: 'IP Passivo', icon: FileText },
   { id: 'RELINT', nome: 'RELINT', icon: FileText },
   { id: 'LEVANTAMENTO', nome: 'Levantamento', icon: FileText },
   { id: 'REP_INTERCEPTACAO', nome: 'Rep. Interceptacao', icon: FileText },
@@ -115,6 +116,9 @@ const quickTemplates = [
   { label: 'Gerar RELINT', prompt: 'Gere um RELINT com base nas informacoes:', type: 'gerar_documento' },
   { label: 'Analise 5W2H', prompt: 'Aplique a metodologia 5W2H neste caso:', type: '5w2h' },
   { label: 'Relato PC', prompt: 'Elabore um Relato PC para este caso:', type: 'relato_pc' },
+  { label: 'Analisar IP', prompt: '/ANALISAR IP - Analise este Inquerito Policial e extraia todos os dados:', type: 'ip_passivo_analisar' },
+  { label: 'Gerar Relatorio IP', prompt: '/GERAR RELATORIO - Gere o relatorio final do IP:', type: 'ip_passivo_relatorio' },
+  { label: 'Pendencias IP', prompt: '/LISTAR PENDENCIAS - Liste as pendencias deste IP:', type: 'ip_passivo_pendencias' },
   { label: 'Resumir texto', prompt: 'Resuma o seguinte texto de forma objetiva:', type: 'general' },
   { label: 'Extrair nomes', prompt: 'Extraia todos os nomes de pessoas mencionados:', type: 'general' },
 ]
@@ -739,8 +743,12 @@ ${result.preview.content}`
       else if (tipoDocumento === 'RELINT') actionType = 'gerar_documento'
       else if (tipoDocumento.startsWith('REP_')) actionType = 'gerar_documento'
       else if (tipoDocumento === 'LEVANTAMENTO') actionType = 'gerar_documento'
+      else if (tipoDocumento === 'IP_PASSIVO') actionType = 'ip_passivo_analisar'
       else if (messageText.toLowerCase().includes('5w2h')) actionType = '5w2h'
       else if (messageText.toLowerCase().includes('rai')) actionType = 'analisar_rai'
+      else if (messageText.toLowerCase().includes('/analisar ip')) actionType = 'ip_passivo_analisar'
+      else if (messageText.toLowerCase().includes('/gerar relatorio')) actionType = 'ip_passivo_relatorio'
+      else if (messageText.toLowerCase().includes('/listar pendencias')) actionType = 'ip_passivo_pendencias'
 
       if (documentoAtual && tipoDocumento !== 'general') {
         actionType = 'continue_document'
