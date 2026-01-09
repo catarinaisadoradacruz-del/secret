@@ -1,5 +1,6 @@
 // Armazenamento de documentos processados no Supabase
 // Permite recuperar contexto entre sessoes
+// SEM RESUMOS - mantendo texto original intacto
 
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import type { ProcessedDocument, DocumentChunk, ExtractedEntity } from './document-processor'
@@ -14,8 +15,6 @@ export interface StoredDocumentContext {
   file_type: string
   file_size: number
   total_chunks: number
-  summary: string
-  key_points: string[]
   entities: ExtractedEntity[]
   chunks_data: DocumentChunk[]
   created_at: string
@@ -43,8 +42,6 @@ export async function saveDocumentContext(
         file_type: doc.fileType,
         file_size: doc.fileSize,
         total_chunks: doc.totalChunks,
-        summary: doc.summary,
-        key_points: doc.keyPoints,
         entities: doc.entities,
         chunks_data: doc.chunks,
         expires_at: expiresAt.toISOString()
@@ -158,6 +155,7 @@ export async function searchInDocuments(
 
 /**
  * Gera contexto consolidado de todos os documentos para a IA
+ * SEM RESUMOS - apenas informacoes basicas e entidades
  */
 export async function generateConsolidatedContext(sessionId: string): Promise<string> {
   const documents = await getSessionDocuments(sessionId)
@@ -169,18 +167,19 @@ export async function generateConsolidatedContext(sessionId: string): Promise<st
   let context = '\n=== DOCUMENTOS CARREGADOS NA SESSAO ===\n\n'
 
   for (const doc of documents) {
-    context += `📄 ${doc.file_name}\n`
-    context += `   Tipo: ${doc.file_type} | Tamanho: ${formatFileSize(doc.file_size)}\n`
-    context += `   Partes: ${doc.total_chunks}\n`
-
-    if (doc.summary) {
-      context += `   Resumo: ${doc.summary.substring(0, 200)}${doc.summary.length > 200 ? '...' : ''}\n`
-    }
+    context += '📄 ' + doc.file_name + '\n'
+    context += '   Tipo: ' + doc.file_type + ' | Tamanho: ' + formatFileSize(doc.file_size) + '\n'
+    context += '   Partes: ' + doc.total_chunks + '\n'
 
     if (doc.entities && doc.entities.length > 0) {
       const pessoas = doc.entities.filter(e => e.type === 'PESSOA').slice(0, 5)
       if (pessoas.length > 0) {
-        context += `   Pessoas: ${pessoas.map(p => p.value).join(', ')}\n`
+        context += '   Pessoas: ' + pessoas.map(p => p.value).join(', ') + '\n'
+      }
+
+      const cpfs = doc.entities.filter(e => e.type === 'CPF').slice(0, 3)
+      if (cpfs.length > 0) {
+        context += '   CPFs: ' + cpfs.map(p => p.value).join(', ') + '\n'
       }
     }
 
@@ -229,27 +228,6 @@ export async function removeDocumentContext(documentContextId: string): Promise<
     return !error
   } catch (err) {
     console.error('Erro ao remover contexto:', err)
-    return false
-  }
-}
-
-/**
- * Atualiza resumo de um documento
- */
-export async function updateDocumentSummary(
-  documentContextId: string,
-  summary: string,
-  keyPoints: string[]
-): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('document_contexts')
-      .update({ summary, key_points: keyPoints })
-      .eq('id', documentContextId)
-
-    return !error
-  } catch (err) {
-    console.error('Erro ao atualizar resumo:', err)
     return false
   }
 }
