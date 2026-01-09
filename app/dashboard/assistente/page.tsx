@@ -438,75 +438,84 @@ export default function AssistentePage() {
         let base64Data = ''
         let isLargeDocument = false
 
+        // Converter para base64 para preview
         const arrayBuffer = await file.arrayBuffer()
         const base64 = btoa(new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''))
         base64Data = base64
 
-        // OCR para imagens usando nova API
-        if (file.type.startsWith('image/')) {
-          try {
-            const ocrText = await runOCROnImage(base64, file.type)
-            conteudoExtraido = ocrText
-          } catch (err) {
-            console.error('Erro no OCR:', err)
-            // Fallback para API antiga
-            try {
-              const ocrResponse = await fetch('/api/gemini', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  prompt: 'Extraia todo o texto visivel nesta imagem.',
-                  type: 'ocr',
-                  imageData: { mimeType: file.type, data: base64 }
-                })
-              })
-              if (ocrResponse.ok) {
-                const ocrData = await ocrResponse.json()
-                conteudoExtraido = ocrData.response || ''
+        console.log(`\n📄 Processando arquivo: ${file.name}`)
+        console.log(`   Tipo: ${file.type}`)
+        console.log(`   Tamanho: ${(file.size / 1024 / 1024).toFixed(2)} MB`)
+
+        // NOVA API UNIFICADA - processa qualquer tipo de arquivo
+        try {
+          const formData = new FormData()
+          formData.append('file', file)
+
+          console.log('   Chamando /api/files/process...')
+          const processResponse = await fetch('/api/files/process', {
+            method: 'POST',
+            body: formData,
+            credentials: 'include'
+          })
+
+          if (processResponse.ok) {
+            const result = await processResponse.json()
+            if (result.success && result.data) {
+              conteudoExtraido = result.data.text || ''
+              isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
+              console.log(`   ✅ Sucesso: ${result.data.charCount} caracteres via ${result.data.processingMethod}`)
+            } else {
+              console.error('   ❌ API retornou erro:', result.error)
+            }
+          } else {
+            const errorText = await processResponse.text()
+            console.error(`   ❌ Erro HTTP ${processResponse.status}:`, errorText)
+
+            // FALLBACK: Tentar APIs especificas
+            console.log('   🔄 Tentando fallback...')
+
+            if (file.type.startsWith('image/')) {
+              // Fallback para imagens
+              try {
+                const ocrText = await runOCROnImage(base64, file.type)
+                conteudoExtraido = ocrText
+                console.log('   ✅ Fallback OCR sucesso')
+              } catch (e) {
+                console.error('   ❌ Fallback OCR falhou:', e)
               }
-            } catch (e) {
-              console.error('Erro no OCR fallback:', e)
+            } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+              // Fallback para PDFs via API antiga
+              try {
+                const pdfFormData = new FormData()
+                pdfFormData.append('file', file)
+
+                const pdfResponse = await fetch('/api/pdf/extract', {
+                  method: 'POST',
+                  body: pdfFormData,
+                  credentials: 'include'
+                })
+
+                if (pdfResponse.ok) {
+                  const pdfData = await pdfResponse.json()
+                  conteudoExtraido = pdfData.text || ''
+                  console.log('   ✅ Fallback PDF sucesso')
+                }
+              } catch (e) {
+                console.error('   ❌ Fallback PDF falhou:', e)
+              }
+            } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+              // Fallback para texto
+              conteudoExtraido = await file.text()
+              console.log('   ✅ Fallback texto sucesso')
             }
           }
-        } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-          conteudoExtraido = await file.text()
-          isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
-        } else if (file.type === 'application/pdf') {
-          try {
-            // Usar nova API que suporta PDFs grandes via File API do Gemini
-            const formData = new FormData()
-            formData.append('file', file)
+        } catch (err) {
+          console.error('   ❌ Erro no processamento:', err)
 
-            const pdfResponse = await fetch('/api/pdf/extract', {
-              method: 'POST',
-              body: formData
-            })
-
-            if (pdfResponse.ok) {
-              const pdfData = await pdfResponse.json()
-              conteudoExtraido = pdfData.text || ''
-              isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
-              console.log('PDF extraido: ' + pdfData.charCount + ' caracteres')
-            } else {
-              // Fallback para API antiga em caso de erro
-              console.error('Erro na nova API, tentando fallback...')
-              const fallbackResponse = await fetch('/api/gemini', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  prompt: 'Extraia todo o texto deste documento PDF.',
-                  type: 'pdf_extract',
-                  fileData: { mimeType: file.type, data: base64, name: file.name }
-                })
-              })
-              if (fallbackResponse.ok) {
-                const fallbackData = await fallbackResponse.json()
-                conteudoExtraido = fallbackData.response || ''
-                isLargeDocument = conteudoExtraido.length > LARGE_FILE_THRESHOLD
-              }
-            }
-          } catch (err) {
-            console.error('Erro ao processar PDF:', err)
+          // Ultimo recurso: ler texto diretamente se possivel
+          if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+            conteudoExtraido = await file.text()
           }
         }
 
