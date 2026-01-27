@@ -1,0 +1,24 @@
+{
+  "name": "VitaFit AI",
+  "short_name": "VitaFit",
+  "description": "Seu app de nutricao e treino personalizado com IA para mulheres",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#FBF9F7",
+  "theme_color": "#E8A5B3",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
