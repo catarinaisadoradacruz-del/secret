@@ -2000,10 +2000,7 @@ ${result.preview.content}`
 
                 {/* Textarea Expansivel */}
                 <textarea
-                  ref={(el) => {
-                    inputRef.current = el
-                    if (textareaRef) textareaRef.current = el
-                  }}
+                  ref={textareaRef}
                   value={inputMessage}
                   onChange={(e) => {
                     setInputMessage(e.target.value)
