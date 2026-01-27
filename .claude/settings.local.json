@@ -1,8 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(node scripts/db-query.js:*)",
+      "Bash(powershell -Command \"cd ''c:\\\\Users\\\\Administrador\\\\Desktop\\\\Investigações\\\\App\\\\pcgo-sistema''; node scripts/db-query.js list-tables\")",
+      "Bash(powershell -Command \"$headers = @{''apikey''=''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFseGFieGhzenB2ZXRibHZuZnhsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Nzc5NzMyNSwiZXhwIjoyMDgzMzczMzI1fQ.8JOJnLml2uzDSLjUuWIprZpTADo_TnfqgblcELm2GYo'';''Authorization''=''Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFseGFieGhzenB2ZXRibHZuZnhsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Nzc5NzMyNSwiZXhwIjoyMDgzMzczMzI1fQ.8JOJnLml2uzDSLjUuWIprZpTADo_TnfqgblcELm2GYo''}; $response = Invoke-RestMethod -Uri ''https://qlxabxhszpvetblvnfxl.supabase.co/rest/v1/'' -Headers $headers; $response | ConvertTo-Json\")",
+      "Bash(powershell:*)"
     ]
   }
 }
