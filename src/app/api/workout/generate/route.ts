@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { generateWorkoutPlan } from '@/lib/ai/gemini'
-import type { User } from '@/types'
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,19 +30,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const {
-      duration = 30,
-      focus = 'full_body',
-      equipment = [],
-      intensity = 'moderate'
-    } = body
+    const { duration = 30 } = body
 
     // Generate workout with Gemini
-    const workout = await generateWorkoutPlan(profile as User, {
-      duration,
-      focus,
-      equipment,
-      intensity
+    const workout = await generateWorkoutPlan({
+      name: profile.name || 'Usuária',
+      phase: profile.phase || 'ACTIVE',
+      gestationWeek: profile.gestation_weeks,
+      goals: profile.goals || [],
+      exerciseLevel: profile.exercise_level || 'moderate'
     })
 
     // Save workout to database

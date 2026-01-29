@@ -4,7 +4,20 @@
       "Bash(node scripts/db-query.js:*)",
       "Bash(powershell -Command \"cd ''c:\\\\Users\\\\Administrador\\\\Desktop\\\\Investigações\\\\App\\\\pcgo-sistema''; node scripts/db-query.js list-tables\")",
       "Bash(powershell -Command \"$headers = @{''apikey''=''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFseGFieGhzenB2ZXRibHZuZnhsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Nzc5NzMyNSwiZXhwIjoyMDgzMzczMzI1fQ.8JOJnLml2uzDSLjUuWIprZpTADo_TnfqgblcELm2GYo'';''Authorization''=''Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFseGFieGhzenB2ZXRibHZuZnhsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Nzc5NzMyNSwiZXhwIjoyMDgzMzczMzI1fQ.8JOJnLml2uzDSLjUuWIprZpTADo_TnfqgblcELm2GYo''}; $response = Invoke-RestMethod -Uri ''https://qlxabxhszpvetblvnfxl.supabase.co/rest/v1/'' -Headers $headers; $response | ConvertTo-Json\")",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:qlxabxhszpvetblvnfxl.supabase.co)",
+      "Bash(cmd.exe /c \"where node\")",
+      "Bash(cmd.exe /c \"curl --version\")",
+      "Bash(curl.exe:*)",
+      "Bash(nslookup:*)",
+      "Bash(TABLES=\"chat_messages chat_attachments chat_sessions document_contexts document_images rai_analysis rai_analises forensic_images forensic_analysis phone_records erb_locations operations operacoes documents documentos relatos_pc alvo_enderecos alvo_passagens alvo_telefones alvo_veiculos alvos investigations audit_log permissions team_members teams unidades users\")",
+      "Bash(__NEW_LINE_3ad0a6fe474c653f__ for table in $TABLES)",
+      "Bash(do)",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(__NEW_LINE_a726ab55dac9e599__ for table in $TABLES)",
+      "Bash(npm run build:*)"
     ]
   }
 }
