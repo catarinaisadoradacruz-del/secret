@@ -5,72 +5,264 @@ import { motion } from 'framer-motion'
 import {
   Heart, Apple, Dumbbell, MessageCircle, TrendingUp,
   ChevronRight, Sparkles, Calendar, Bell, Trophy, Camera,
-  ShoppingCart, BookOpen, Star, Flame, Target
+  ShoppingCart, BookOpen, Star, Flame, Target, Droplets,
+  Moon, Baby, Activity, Utensils, Scale, Clock, ArrowUp,
+  ArrowDown, Minus, AlertCircle, CheckCircle2, Plus
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
-interface UserData {
-  id: string
-  name: string
-  phase: string
-  streak?: number
-  points?: number
+interface DashboardData {
+  user: any
+  stats: {
+    streak: number
+    points: number
+    level: number
+    workoutsThisWeek: number
+    workoutsTotal: number
+    mealsToday: number
+    waterToday: number
+    waterGoal: number
+    caloriesTotal: number
+    caloriesGoal: number
+  }
+  pregnancy: {
+    isPregnant: boolean
+    currentWeek: number
+    dueDate: string | null
+    trimester: number
+    daysUntilDue: number
+    babySize: string
+    babySizeComparison: string
+  } | null
+  todayWorkout: any | null
+  todayMeals: any[]
+  upcomingAppointments: any[]
+  recentAchievements: any[]
+  dailyTip: string
 }
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<UserData | null>(null)
+  const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [stats, setStats] = useState({ streak: 0, points: 0, workouts: 0 })
+  const [waterAmount, setWaterAmount] = useState(250)
 
   useEffect(() => {
-    loadUser()
+    loadDashboardData()
   }, [])
 
-  const loadUser = async () => {
+  const loadDashboardData = async () => {
     try {
       const supabase = createClient()
       const { data: { user: authUser } } = await supabase.auth.getUser()
-
-      if (authUser) {
-        const { data } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', authUser.id)
-          .single()
-
-        setUser(data)
-
-        // Carregar stats
-        const { data: points } = await supabase
-          .from('user_points')
-          .select('total_points, current_streak')
-          .eq('user_id', authUser.id)
-          .single()
-
-        const { count: workouts } = await supabase
-          .from('workouts')
-          .select('id', { count: 'exact' })
-          .eq('user_id', authUser.id)
-          .eq('completed', true)
-
-        setStats({
-          streak: points?.current_streak || 0,
-          points: points?.total_points || 0,
-          workouts: workouts || 0
-        })
+      if (!authUser) {
+        setLoading(false)
+        return
       }
+
+      // Carregar usuário
+      const { data: userData } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', authUser.id)
+        .single()
+
+      // Carregar pontos
+      const { data: pointsData } = await supabase
+        .from('user_points')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .single()
+
+      // Treinos desta semana
+      const weekStart = new Date()
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay())
+      const { count: workoutsWeek } = await supabase
+        .from('workouts')
+        .select('id', { count: 'exact' })
+        .eq('user_id', authUser.id)
+        .eq('completed', true)
+        .gte('created_at', weekStart.toISOString())
+
+      // Total de treinos
+      const { count: workoutsTotal } = await supabase
+        .from('workouts')
+        .select('id', { count: 'exact' })
+        .eq('user_id', authUser.id)
+        .eq('completed', true)
+
+      // Refeições de hoje
+      const today = new Date().toISOString().split('T')[0]
+      const { data: mealsToday } = await supabase
+        .from('meals')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .gte('created_at', today)
+
+      // Água de hoje
+      const { data: waterData } = await supabase
+        .from('water_intake')
+        .select('amount')
+        .eq('user_id', authUser.id)
+        .gte('created_at', today)
+
+      const waterToday = (waterData || []).reduce((sum, w) => sum + w.amount, 0)
+
+      // Próximas consultas
+      const { data: appointments } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .gte('date', today)
+        .order('date', { ascending: true })
+        .limit(3)
+
+      // Conquistas recentes
+      const { data: achievements } = await supabase
+        .from('user_achievements')
+        .select('*, achievements(*)')
+        .eq('user_id', authUser.id)
+        .order('unlocked_at', { ascending: false })
+        .limit(3)
+
+      // Calcular dados da gravidez
+      let pregnancy = null
+      if (userData?.phase === 'PREGNANT' && userData?.last_menstrual_date) {
+        const dum = new Date(userData.last_menstrual_date)
+        const today = new Date()
+        const diffDays = Math.floor((today.getTime() - dum.getTime()) / (1000 * 60 * 60 * 24))
+        const currentWeek = Math.floor(diffDays / 7)
+        const dueDate = new Date(dum.getTime() + 280 * 24 * 60 * 60 * 1000)
+        const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+        const trimester = currentWeek <= 12 ? 1 : currentWeek <= 27 ? 2 : 3
+
+        // Tamanho do bebê por semana
+        const babySizes: Record<number, { size: string, comparison: string }> = {
+          4: { size: '1mm', comparison: 'semente de papoula' },
+          5: { size: '2mm', comparison: 'semente de gergelim' },
+          6: { size: '4mm', comparison: 'lentilha' },
+          7: { size: '8mm', comparison: 'mirtilo' },
+          8: { size: '1.6cm', comparison: 'framboesa' },
+          9: { size: '2.3cm', comparison: 'azeitona' },
+          10: { size: '3.1cm', comparison: 'ameixa seca' },
+          11: { size: '4.1cm', comparison: 'figo' },
+          12: { size: '5.4cm', comparison: 'limão' },
+          13: { size: '7.4cm', comparison: 'pêssego' },
+          14: { size: '8.7cm', comparison: 'maçã' },
+          15: { size: '10.1cm', comparison: 'laranja' },
+          16: { size: '11.6cm', comparison: 'abacate' },
+          17: { size: '13cm', comparison: 'pera' },
+          18: { size: '14.2cm', comparison: 'batata doce' },
+          19: { size: '15.3cm', comparison: 'manga' },
+          20: { size: '25.6cm', comparison: 'banana' },
+          24: { size: '30cm', comparison: 'milho' },
+          28: { size: '37.6cm', comparison: 'berinjela' },
+          32: { size: '42.4cm', comparison: 'abóbora' },
+          36: { size: '47.4cm', comparison: 'melão' },
+          40: { size: '51.2cm', comparison: 'melancia pequena' },
+        }
+        
+        const weekForSize = Object.keys(babySizes)
+          .map(Number)
+          .filter(w => w <= currentWeek)
+          .pop() || 4
+
+        pregnancy = {
+          isPregnant: true,
+          currentWeek,
+          dueDate: dueDate.toISOString(),
+          trimester,
+          daysUntilDue: Math.max(0, daysUntilDue),
+          babySize: babySizes[weekForSize]?.size || '?',
+          babySizeComparison: babySizes[weekForSize]?.comparison || 'semente'
+        }
+      }
+
+      // Calorias de hoje
+      const caloriesToday = (mealsToday || []).reduce((sum, m) => sum + (m.calories || 0), 0)
+
+      // Dicas do dia
+      const tips = [
+        'Beba água regularmente! A hidratação ajuda na digestão e energia.',
+        'Inclua vegetais coloridos em suas refeições para mais nutrientes.',
+        'Pequenas caminhadas após as refeições ajudam na digestão.',
+        'Durma bem! O sono é essencial para a recuperação do corpo.',
+        'Prefira alimentos integrais aos refinados.',
+        'Faça pausas para alongamento durante o trabalho.',
+        'Mastigue bem os alimentos para melhor absorção.',
+        'Evite alimentos ultraprocessados.',
+      ]
+      const dailyTip = tips[new Date().getDate() % tips.length]
+
+      setData({
+        user: userData,
+        stats: {
+          streak: pointsData?.current_streak || 0,
+          points: pointsData?.total_points || 0,
+          level: Math.floor((pointsData?.total_points || 0) / 500) + 1,
+          workoutsThisWeek: workoutsWeek || 0,
+          workoutsTotal: workoutsTotal || 0,
+          mealsToday: mealsToday?.length || 0,
+          waterToday,
+          waterGoal: 2000,
+          caloriesTotal: caloriesToday,
+          caloriesGoal: userData?.phase === 'PREGNANT' ? 2300 : 2000
+        },
+        pregnancy,
+        todayWorkout: null,
+        todayMeals: mealsToday || [],
+        upcomingAppointments: appointments || [],
+        recentAchievements: achievements || [],
+        dailyTip
+      })
+
     } catch (e) {
-      console.error(e)
+      console.error('Erro ao carregar dashboard:', e)
     } finally {
       setLoading(false)
     }
   }
 
+  const addWater = async () => {
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      await supabase.from('water_intake').insert({
+        user_id: user.id,
+        amount: waterAmount
+      })
+
+      // Atualizar estado local
+      setData(prev => prev ? {
+        ...prev,
+        stats: {
+          ...prev.stats,
+          waterToday: prev.stats.waterToday + waterAmount
+        }
+      } : null)
+
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   if (loading) {
     return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-500">Carregando...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!data) {
+    return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse text-primary-500">Carregando...</div>
+        <p>Erro ao carregar dados</p>
       </div>
     )
   }
@@ -82,202 +274,308 @@ export default function DashboardPage() {
     return 'Boa noite'
   }
 
-  return (
-    <div className="p-4 space-y-6 pb-24">
-      {/* Header */}
-      <header className="flex items-center justify-between">
-        <div>
-          <p className="text-text-secondary">{greeting()},</p>
-          <h1 className="text-2xl font-display font-bold">
-            {user?.name?.split(' ')[0] || 'Usuária'}
-          </h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link 
-            href="/achievements" 
-            className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center"
-          >
-            <Trophy className="w-5 h-5 text-yellow-600" />
-          </Link>
-          <Link 
-            href="/notifications" 
-            className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center"
-          >
-            <Bell className="w-5 h-5 text-primary-600" />
-          </Link>
-        </div>
-      </header>
+  const waterPercentage = Math.min((data.stats.waterToday / data.stats.waterGoal) * 100, 100)
+  const caloriesPercentage = Math.min((data.stats.caloriesTotal / data.stats.caloriesGoal) * 100, 100)
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white rounded-2xl p-3 text-center shadow-sm">
-          <Flame className="w-6 h-6 mx-auto mb-1 text-orange-500" />
-          <p className="text-xl font-bold">{stats.streak}</p>
-          <p className="text-xs text-gray-500">Sequência</p>
+  return (
+    <div className="min-h-screen bg-gray-50 pb-24">
+      {/* Header */}
+      <div className="bg-gradient-to-br from-primary-500 to-primary-600 text-white px-4 pt-6 pb-8">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <p className="text-white/80">{greeting()},</p>
+            <h1 className="text-2xl font-bold">{data.user?.name?.split(' ')[0] || 'Usuária'}</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link href="/achievements" className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+              <Trophy className="w-5 h-5" />
+            </Link>
+            <Link href="/notifications" className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+              <Bell className="w-5 h-5" />
+            </Link>
+          </div>
         </div>
-        <div className="bg-white rounded-2xl p-3 text-center shadow-sm">
-          <Star className="w-6 h-6 mx-auto mb-1 text-yellow-500" />
-          <p className="text-xl font-bold">{stats.points}</p>
-          <p className="text-xs text-gray-500">Pontos</p>
-        </div>
-        <div className="bg-white rounded-2xl p-3 text-center shadow-sm">
-          <Dumbbell className="w-6 h-6 mx-auto mb-1 text-primary-500" />
-          <p className="text-xl font-bold">{stats.workouts}</p>
-          <p className="text-xs text-gray-500">Treinos</p>
+
+        {/* Stats Row */}
+        <div className="grid grid-cols-4 gap-3">
+          <div className="bg-white/10 rounded-xl p-3 text-center">
+            <Flame className="w-5 h-5 mx-auto mb-1" />
+            <p className="text-lg font-bold">{data.stats.streak}</p>
+            <p className="text-xs text-white/70">Dias</p>
+          </div>
+          <div className="bg-white/10 rounded-xl p-3 text-center">
+            <Star className="w-5 h-5 mx-auto mb-1" />
+            <p className="text-lg font-bold">{data.stats.points}</p>
+            <p className="text-xs text-white/70">Pontos</p>
+          </div>
+          <div className="bg-white/10 rounded-xl p-3 text-center">
+            <Dumbbell className="w-5 h-5 mx-auto mb-1" />
+            <p className="text-lg font-bold">{data.stats.workoutsThisWeek}</p>
+            <p className="text-xs text-white/70">Semana</p>
+          </div>
+          <div className="bg-white/10 rounded-xl p-3 text-center">
+            <Target className="w-5 h-5 mx-auto mb-1" />
+            <p className="text-lg font-bold">Nv {data.stats.level}</p>
+            <p className="text-xs text-white/70">Nível</p>
+          </div>
         </div>
       </div>
 
-      {/* Welcome Card */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-gradient-to-br from-primary-500 to-primary-600 rounded-3xl p-6 text-white"
-      >
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="w-5 h-5" />
-              <span className="text-sm font-medium opacity-90">VitaFit AI</span>
+      <div className="px-4 -mt-4 space-y-4">
+        {/* Card de Gravidez */}
+        {data.pregnancy && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-gradient-to-r from-pink-500 to-rose-500 rounded-2xl p-5 text-white shadow-lg"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Baby className="w-5 h-5" />
+                  <span className="text-sm font-medium">Semana {data.pregnancy.currentWeek}</span>
+                  <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">
+                    {data.pregnancy.trimester}º Trimestre
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold mb-1">
+                  {data.pregnancy.daysUntilDue} dias para o parto
+                </h2>
+                <p className="text-white/80 text-sm">
+                  Seu bebê tem aproximadamente {data.pregnancy.babySize} - tamanho de um(a) {data.pregnancy.babySizeComparison}! 🍼
+                </p>
+              </div>
+              <div className="text-5xl">👶</div>
             </div>
-            <h2 className="text-xl font-display font-bold mb-2">
-              Como posso te ajudar hoje?
-            </h2>
-            <p className="text-white/80 text-sm mb-4">
-              Estou aqui para guiar sua jornada de saúde e bem-estar
-            </p>
-            <Link
-              href="/chat"
-              className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 px-4 py-2 rounded-xl text-sm font-medium transition-all"
+            <Link 
+              href="/baby-development" 
+              className="mt-4 inline-flex items-center gap-2 bg-white/20 px-4 py-2 rounded-xl text-sm hover:bg-white/30 transition"
             >
-              Conversar com Vita
+              Ver desenvolvimento
               <ChevronRight className="w-4 h-4" />
             </Link>
-          </div>
-          <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center">
-            <Heart className="w-8 h-8" />
-          </div>
-        </div>
-      </motion.div>
+          </motion.div>
+        )}
 
-      {/* Quick Actions */}
-      <section>
-        <h3 className="font-display font-semibold text-lg mb-4">Ações Rápidas</h3>
+        {/* Card AI Chat */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white rounded-2xl p-5 shadow-sm"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+              <Sparkles className="w-7 h-7 text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold">Assistente Vita</h3>
+              <p className="text-sm text-gray-500">Como posso ajudar hoje?</p>
+            </div>
+            <Link href="/chat" className="btn-primary px-4 py-2 rounded-xl text-sm">
+              Conversar
+            </Link>
+          </div>
+        </motion.div>
+
+        {/* Hidratação e Calorias */}
         <div className="grid grid-cols-2 gap-4">
-          <Link href="/scanner" className="card flex flex-col items-center text-center">
-            <div className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center mb-3">
-              <Camera className="w-6 h-6 text-purple-600" />
+          {/* Água */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="bg-white rounded-2xl p-4 shadow-sm"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Droplets className="w-5 h-5 text-blue-500" />
+                <span className="font-medium text-sm">Água</span>
+              </div>
+              <span className="text-xs text-gray-500">{data.stats.waterToday}ml / {data.stats.waterGoal}ml</span>
             </div>
-            <span className="font-medium">Scanner</span>
-            <span className="text-xs text-text-secondary">Código de barras</span>
-          </Link>
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden mb-3">
+              <motion.div
+                className="h-full bg-gradient-to-r from-blue-400 to-cyan-400"
+                initial={{ width: 0 }}
+                animate={{ width: `${waterPercentage}%` }}
+                transition={{ duration: 0.5 }}
+              />
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={waterAmount}
+                onChange={(e) => setWaterAmount(Number(e.target.value))}
+                className="flex-1 text-sm border rounded-lg px-2 py-1"
+              >
+                <option value={150}>150ml</option>
+                <option value={200}>200ml</option>
+                <option value={250}>250ml</option>
+                <option value={300}>300ml</option>
+                <option value={500}>500ml</option>
+              </select>
+              <button onClick={addWater} className="bg-blue-500 text-white px-3 py-1 rounded-lg text-sm">
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
 
-          <Link href="/workout" className="card flex flex-col items-center text-center">
-            <div className="w-12 h-12 rounded-2xl bg-secondary-100 flex items-center justify-center mb-3">
-              <Dumbbell className="w-6 h-6 text-secondary-600" />
+          {/* Calorias */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white rounded-2xl p-4 shadow-sm"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Utensils className="w-5 h-5 text-orange-500" />
+                <span className="font-medium text-sm">Calorias</span>
+              </div>
+              <span className="text-xs text-gray-500">{data.stats.caloriesTotal} / {data.stats.caloriesGoal}</span>
             </div>
-            <span className="font-medium">Treinos</span>
-            <span className="text-xs text-text-secondary">14 treinos disponíveis</span>
-          </Link>
-
-          <Link href="/achievements" className="card flex flex-col items-center text-center">
-            <div className="w-12 h-12 rounded-2xl bg-yellow-100 flex items-center justify-center mb-3">
-              <Trophy className="w-6 h-6 text-yellow-600" />
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden mb-3">
+              <motion.div
+                className={`h-full ${caloriesPercentage > 100 ? 'bg-red-400' : 'bg-gradient-to-r from-orange-400 to-yellow-400'}`}
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(caloriesPercentage, 100)}%` }}
+                transition={{ duration: 0.5 }}
+              />
             </div>
-            <span className="font-medium">Conquistas</span>
-            <span className="text-xs text-text-secondary">Desafios e prêmios</span>
-          </Link>
-
-          <Link href="/chat" className="card flex flex-col items-center text-center">
-            <div className="w-12 h-12 rounded-2xl bg-accent-300/30 flex items-center justify-center mb-3">
-              <MessageCircle className="w-6 h-6 text-accent-500" />
-            </div>
-            <span className="font-medium">Chat IA</span>
-            <span className="text-xs text-text-secondary">Assistente virtual</span>
-          </Link>
+            <Link href="/nutrition" className="text-sm text-primary-600 hover:underline flex items-center gap-1">
+              Registrar refeição <ChevronRight className="w-4 h-4" />
+            </Link>
+          </motion.div>
         </div>
-      </section>
 
-      {/* More Actions */}
-      <section>
-        <h3 className="font-display font-semibold text-lg mb-4">Mais Opções</h3>
-        <div className="space-y-3">
-          <Link href="/nutrition" className="card flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-green-100 flex items-center justify-center">
-              <Apple className="w-6 h-6 text-green-600" />
-            </div>
-            <div className="flex-1">
-              <span className="font-medium">Nutrição</span>
-              <p className="text-xs text-text-secondary">Controle suas refeições</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-          </Link>
-
-          <Link href="/shopping" className="card flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-pink-100 flex items-center justify-center">
-              <ShoppingCart className="w-6 h-6 text-pink-600" />
-            </div>
-            <div className="flex-1">
-              <span className="font-medium">Lista de Compras</span>
-              <p className="text-xs text-text-secondary">Gere com IA</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-          </Link>
-
-          <Link href="/content" className="card flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center">
-              <BookOpen className="w-6 h-6 text-blue-600" />
-            </div>
-            <div className="flex-1">
-              <span className="font-medium">Conteúdo</span>
-              <p className="text-xs text-text-secondary">Artigos e dicas</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-          </Link>
-
-          <Link href="/progress" className="card flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-100 flex items-center justify-center">
-              <TrendingUp className="w-6 h-6 text-indigo-600" />
-            </div>
-            <div className="flex-1">
-              <span className="font-medium">Progresso</span>
-              <p className="text-xs text-text-secondary">Acompanhe sua evolução</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-          </Link>
-
-          <Link href="/appointments" className="card flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-cyan-100 flex items-center justify-center">
-              <Calendar className="w-6 h-6 text-cyan-600" />
-            </div>
-            <div className="flex-1">
-              <span className="font-medium">Consultas</span>
-              <p className="text-xs text-text-secondary">Seus compromissos</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-          </Link>
-        </div>
-      </section>
-
-      {/* Daily Tip */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.3 }}
-        className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-4 border border-purple-100"
-      >
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-purple-200 flex items-center justify-center">
-            💡
+        {/* Refeições de Hoje */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="bg-white rounded-2xl p-4 shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Apple className="w-5 h-5 text-green-500" />
+              Refeições Hoje
+            </h3>
+            <Link href="/meal-plan" className="text-sm text-primary-600 hover:underline">
+              Ver plano
+            </Link>
           </div>
-          <div>
-            <h4 className="font-semibold text-purple-900">Dica do Dia</h4>
-            <p className="text-sm text-purple-700 mt-1">
-              Beba água regularmente ao longo do dia. A hidratação adequada 
-              ajuda na digestão, energia e saúde da pele!
-            </p>
+          
+          {data.todayMeals.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">
+              <Utensils className="w-10 h-10 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Nenhuma refeição registrada hoje</p>
+              <Link href="/nutrition" className="text-primary-600 text-sm mt-2 inline-block">
+                Registrar agora
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {data.todayMeals.slice(0, 3).map((meal, i) => (
+                <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">
+                      {meal.meal_type === 'breakfast' ? '🌅' : 
+                       meal.meal_type === 'lunch' ? '☀️' : 
+                       meal.meal_type === 'dinner' ? '🌙' : '🍎'}
+                    </span>
+                    <div>
+                      <p className="font-medium text-sm">{meal.name}</p>
+                      <p className="text-xs text-gray-500">{meal.calories || 0} kcal</p>
+                    </div>
+                  </div>
+                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+
+        {/* Próximas Consultas */}
+        {data.upcomingAppointments.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="bg-white rounded-2xl p-4 shadow-sm"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-purple-500" />
+                Próximas Consultas
+              </h3>
+              <Link href="/appointments" className="text-sm text-primary-600 hover:underline">
+                Ver todas
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {data.upcomingAppointments.map((apt, i) => (
+                <div key={i} className="flex items-center justify-between p-3 bg-purple-50 rounded-xl">
+                  <div>
+                    <p className="font-medium text-sm">{apt.title}</p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(apt.date).toLocaleDateString('pt-BR')} às {apt.time}
+                    </p>
+                  </div>
+                  <span className="text-sm text-purple-600">{apt.doctor}</span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Ações Rápidas */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+        >
+          <h3 className="font-semibold mb-3">Acesso Rápido</h3>
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { href: '/workout', icon: Dumbbell, label: 'Treinos', color: 'bg-orange-100 text-orange-600' },
+              { href: '/meal-plan', icon: Utensils, label: 'Cardápio', color: 'bg-green-100 text-green-600' },
+              { href: '/scanner', icon: Camera, label: 'Scanner', color: 'bg-purple-100 text-purple-600' },
+              { href: '/shopping', icon: ShoppingCart, label: 'Compras', color: 'bg-pink-100 text-pink-600' },
+              { href: '/recipes', icon: BookOpen, label: 'Receitas', color: 'bg-amber-100 text-amber-600' },
+              { href: '/content', icon: Sparkles, label: 'Conteúdo', color: 'bg-blue-100 text-blue-600' },
+              { href: '/progress', icon: TrendingUp, label: 'Progresso', color: 'bg-indigo-100 text-indigo-600' },
+              { href: '/profile', icon: Heart, label: 'Perfil', color: 'bg-rose-100 text-rose-600' },
+            ].map((item, i) => (
+              <Link
+                key={i}
+                href={item.href}
+                className="flex flex-col items-center p-3 bg-white rounded-xl shadow-sm hover:shadow-md transition"
+              >
+                <div className={`w-10 h-10 rounded-xl ${item.color} flex items-center justify-center mb-2`}>
+                  <item.icon className="w-5 h-5" />
+                </div>
+                <span className="text-xs font-medium text-gray-700">{item.label}</span>
+              </Link>
+            ))}
           </div>
-        </div>
-      </motion.div>
+        </motion.div>
+
+        {/* Dica do Dia */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl p-4"
+        >
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">💡</span>
+            <div>
+              <h4 className="font-semibold text-amber-800">Dica do Dia</h4>
+              <p className="text-sm text-amber-700 mt-1">{data.dailyTip}</p>
+            </div>
+          </div>
+        </motion.div>
+      </div>
     </div>
   )
 }
