@@ -17,7 +17,11 @@
       "Bash(echo:*)",
       "Bash(done)",
       "Bash(__NEW_LINE_a726ab55dac9e599__ for table in $TABLES)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(node scripts/update-premium.js:*)",
+      "Bash(curl:*)"
     ]
   }
 }
