@@ -21,36 +21,42 @@ export async function GET(request: NextRequest) {
       
       if (!existingUser) {
         // Criar usuário na tabela users
-        await supabase.from('users').insert({
-          id: data.user.id,
-          email: data.user.email || '',
-          name: data.user.user_metadata?.name || data.user.user_metadata?.full_name || data.user.email?.split('@')[0] || 'Usuária',
-          avatar_url: data.user.user_metadata?.avatar_url || data.user.user_metadata?.picture || null,
-          phase: 'TRYING',
-          onboarding_completed: false,
-          premium: false,
-          notifications_enabled: true,
-          notification_meals: true,
-          notification_workout: true,
-          notification_water: true,
-          notification_appointments: true,
-          language: 'pt-BR',
-          theme: 'light',
-          exercise_level: 'beginner',
-          cycle_length: 28,
-          workout_duration_preference: 30
-        }).catch(err => {
+        try {
+          await supabase.from('users').insert({
+            id: data.user.id,
+            email: data.user.email || '',
+            name: data.user.user_metadata?.name || data.user.user_metadata?.full_name || data.user.email?.split('@')[0] || 'Usuária',
+            avatar_url: data.user.user_metadata?.avatar_url || data.user.user_metadata?.picture || null,
+            phase: 'TRYING',
+            onboarding_completed: false,
+            premium: false,
+            notifications_enabled: true,
+            notification_meals: true,
+            notification_workout: true,
+            notification_water: true,
+            notification_appointments: true,
+            language: 'pt-BR',
+            theme: 'light',
+            exercise_level: 'beginner',
+            cycle_length: 28,
+            workout_duration_preference: 30
+          })
+        } catch (err) {
           console.error('Error creating user:', err)
-        })
+        }
 
         // Criar pontos iniciais
-        await supabase.from('user_points').insert({
-          user_id: data.user.id,
-          total_points: 0,
-          current_streak: 0,
-          longest_streak: 0,
-          level: 1
-        }).catch(() => {})
+        try {
+          await supabase.from('user_points').insert({
+            user_id: data.user.id,
+            total_points: 0,
+            current_streak: 0,
+            longest_streak: 0,
+            level: 1
+          })
+        } catch (err) {
+          console.error('Error creating points:', err)
+        }
 
         // Redirecionar para onboarding se é novo usuário
         return NextResponse.redirect(`${origin}/onboarding`)
