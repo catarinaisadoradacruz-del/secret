@@ -3,58 +3,77 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
-  Utensils, Plus, Calendar, Sparkles, ChevronRight, 
-  Apple, Coffee, Sun, Moon, Cookie, Flame, Target,
-  TrendingUp, Clock, Loader2, Check, X, Camera
+  Apple, ChefHat, Calendar, ShoppingCart, Sparkles, 
+  ChevronRight, ArrowLeft, Plus, Clock, Flame, 
+  Check, RefreshCw, Loader2, BookOpen, Utensils,
+  Coffee, Sun, Moon, Cookie, Target, TrendingUp
 } from 'lucide-react'
 import Link from 'next/link'
-import { Card, LoadingSpinner } from '@/components/ui'
 import { createClient } from '@/lib/supabase/client'
 
 interface Meal {
-  id: string
-  date: string
-  meal_type: string
+  name: string
   description: string
-  total_calories: number
-  total_protein: number
-  total_carbs: number
-  total_fat: number
-  foods: any[]
-  created_at: string
-}
-
-interface DailyGoals {
   calories: number
   protein: number
   carbs: number
   fat: number
+  time?: string
 }
 
-const MEAL_TYPES = [
-  { key: 'breakfast', label: 'Café da Manhã', icon: Coffee, color: 'bg-amber-100 text-amber-600', time: '07:00' },
-  { key: 'morning_snack', label: 'Lanche da Manhã', icon: Apple, color: 'bg-green-100 text-green-600', time: '10:00' },
-  { key: 'lunch', label: 'Almoço', icon: Sun, color: 'bg-orange-100 text-orange-600', time: '12:30' },
-  { key: 'afternoon_snack', label: 'Lanche da Tarde', icon: Cookie, color: 'bg-pink-100 text-pink-600', time: '16:00' },
-  { key: 'dinner', label: 'Jantar', icon: Moon, color: 'bg-indigo-100 text-indigo-600', time: '19:30' },
-]
+interface DayPlan {
+  day: number
+  date: string
+  meals: {
+    breakfast: Meal
+    morning_snack: Meal
+    lunch: Meal
+    afternoon_snack: Meal
+    dinner: Meal
+  }
+  totalCalories: number
+  tips?: string
+}
+
+interface NutritionPlan {
+  id: string
+  name: string
+  days: DayPlan[]
+  duration: number
+  created_at: string
+  is_active: boolean
+  weekly_tips?: string[]
+  shopping_list?: string[]
+}
+
+interface UserStats {
+  todayCalories: number
+  todayProtein: number
+  todayCarbs: number
+  todayFat: number
+  todayWater: number
+  goalCalories: number
+  mealsLogged: number
+}
 
 export default function NutritionPage() {
-  const [activeTab, setActiveTab] = useState<'today' | 'history' | 'plan'>('today')
-  const [meals, setMeals] = useState<Meal[]>([])
-  const [todayMeals, setTodayMeals] = useState<Meal[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false)
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [selectedMealType, setSelectedMealType] = useState('')
-  const [mealPlan, setMealPlan] = useState<any>(null)
-  const [userPhase, setUserPhase] = useState('ACTIVE')
-  const [dailyGoals, setDailyGoals] = useState<DailyGoals>({
-    calories: 2000,
-    protein: 80,
-    carbs: 250,
-    fat: 65
+  const [activeTab, setActiveTab] = useState<'hoje' | 'plano' | 'receitas'>('hoje')
+  const [currentPlan, setCurrentPlan] = useState<NutritionPlan | null>(null)
+  const [stats, setStats] = useState<UserStats>({
+    todayCalories: 0,
+    todayProtein: 0,
+    todayCarbs: 0,
+    todayFat: 0,
+    todayWater: 0,
+    goalCalories: 2000,
+    mealsLogged: 0
   })
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [selectedDay, setSelectedDay] = useState(0)
+  const [userPhase, setUserPhase] = useState('ACTIVE')
+  const [showGenerateModal, setShowGenerateModal] = useState(false)
+  const [planDuration, setPlanDuration] = useState(7)
 
   useEffect(() => {
     loadData()
@@ -64,680 +83,628 @@ export default function NutritionPage() {
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-      if (!user) {
-        setIsLoading(false)
-        return
-      }
-
-      // Buscar perfil do usuário
+      // Carregar perfil
       const { data: profile } = await supabase
         .from('users')
-        .select('phase, goals, dietary_restrictions')
+        .select('phase, daily_calorie_goal')
         .eq('id', user.id)
         .single()
 
       if (profile) {
         setUserPhase(profile.phase || 'ACTIVE')
-        if (profile.phase === 'PREGNANT') {
-          setDailyGoals({ calories: 2300, protein: 90, carbs: 280, fat: 70 })
-        } else if (profile.phase === 'POSTPARTUM') {
-          setDailyGoals({ calories: 2500, protein: 100, carbs: 300, fat: 75 })
-        }
+        setStats(prev => ({ ...prev, goalCalories: profile.daily_calorie_goal || 2000 }))
       }
 
-      // Buscar refeições de hoje
-      const today = new Date().toISOString().split('T')[0]
-      const { data: todayData } = await supabase
-        .from('meals')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('date', today)
-        .order('created_at', { ascending: true })
-
-      if (todayData) {
-        setTodayMeals(todayData)
-      }
-
-      // Buscar histórico (últimos 7 dias)
-      const weekAgo = new Date()
-      weekAgo.setDate(weekAgo.getDate() - 7)
-      const { data: historyData } = await supabase
-        .from('meals')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('date', weekAgo.toISOString().split('T')[0])
-        .order('date', { ascending: false })
-
-      if (historyData) {
-        setMeals(historyData)
-      }
-
-      // Buscar plano nutricional salvo
-      const { data: planData } = await supabase
+      // Carregar plano ativo
+      const { data: plans } = await supabase
         .from('nutrition_plans')
         .select('*')
         .eq('user_id', user.id)
         .eq('is_active', true)
-        .single()
+        .order('created_at', { ascending: false })
+        .limit(1)
 
-      if (planData?.plan_data) {
-        setMealPlan(planData.plan_data)
+      if (plans && plans.length > 0) {
+        setCurrentPlan({
+          ...plans[0],
+          days: plans[0].plan_data?.days || []
+        })
       }
 
-    } catch (error) {
-      console.error('Erro ao carregar dados:', error)
+      // Carregar refeições de hoje
+      const today = new Date().toISOString().split('T')[0]
+      const { data: meals } = await supabase
+        .from('meals')
+        .select('calories, protein, carbs, fat')
+        .eq('user_id', user.id)
+        .gte('created_at', today)
+
+      if (meals) {
+        const totals = meals.reduce((acc, meal) => ({
+          calories: acc.calories + (meal.calories || 0),
+          protein: acc.protein + (meal.protein || 0),
+          carbs: acc.carbs + (meal.carbs || 0),
+          fat: acc.fat + (meal.fat || 0),
+        }), { calories: 0, protein: 0, carbs: 0, fat: 0 })
+
+        setStats(prev => ({
+          ...prev,
+          todayCalories: totals.calories,
+          todayProtein: totals.protein,
+          todayCarbs: totals.carbs,
+          todayFat: totals.fat,
+          mealsLogged: meals.length
+        }))
+      }
+
+      // Carregar água de hoje
+      const { data: water } = await supabase
+        .from('water_intake')
+        .select('amount')
+        .eq('user_id', user.id)
+        .gte('created_at', today)
+
+      if (water) {
+        const totalWater = water.reduce((sum, w) => sum + w.amount, 0)
+        setStats(prev => ({ ...prev, todayWater: totalWater }))
+      }
+
+    } catch (e) {
+      console.error(e)
     } finally {
-      setIsLoading(false)
+      setLoading(false)
     }
   }
 
-  const generateMealPlan = async () => {
-    setIsGeneratingPlan(true)
-    try {
-      const response = await fetch('/api/nutrition/generate-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      })
-      const data = await response.json()
-      if (data.plan) {
-        setMealPlan(data.plan)
-      }
-    } catch (error) {
-      console.error('Erro ao gerar plano:', error)
-    } finally {
-      setIsGeneratingPlan(false)
-    }
-  }
-
-  const addQuickMeal = async (mealType: string, description: string, calories: number) => {
+  const generatePlan = async () => {
+    setGenerating(true)
+    setShowGenerateModal(false)
+    
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const today = new Date().toISOString().split('T')[0]
-      
-      const { data, error } = await supabase
-        .from('meals')
-        .insert({
-          user_id: user.id,
-          date: today,
-          meal_type: mealType,
-          description,
-          total_calories: calories,
-          total_protein: Math.round(calories * 0.15 / 4),
-          total_carbs: Math.round(calories * 0.5 / 4),
-          total_fat: Math.round(calories * 0.35 / 9),
-          foods: [{ name: description, calories }]
-        })
-        .select()
-        .single()
+      const response = await fetch('/api/nutrition-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: planDuration })
+      })
 
-      if (data) {
-        setTodayMeals(prev => [...prev, data])
-        setShowAddModal(false)
-        setSelectedMealType('')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.plan) {
+          setCurrentPlan({
+            id: data.savedId,
+            name: `Plano ${planDuration} dias`,
+            days: data.plan.days || [],
+            duration: planDuration,
+            created_at: new Date().toISOString(),
+            is_active: true,
+            weekly_tips: data.plan.weeklyTips,
+            shopping_list: data.plan.shoppingList
+          })
+        }
       }
-    } catch (error) {
-      console.error('Erro ao adicionar refeição:', error)
+    } catch (e) {
+      console.error(e)
+      alert('Erro ao gerar plano. Tente novamente.')
+    } finally {
+      setGenerating(false)
     }
   }
 
-  // Calcular totais do dia
-  const todayTotals = todayMeals.reduce((acc, meal) => ({
-    calories: acc.calories + (meal.total_calories || 0),
-    protein: acc.protein + (meal.total_protein || 0),
-    carbs: acc.carbs + (meal.total_carbs || 0),
-    fat: acc.fat + (meal.total_fat || 0)
-  }), { calories: 0, protein: 0, carbs: 0, fat: 0 })
+  const addWater = async (amount: number) => {
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-  const calorieProgress = Math.min((todayTotals.calories / dailyGoals.calories) * 100, 100)
+      await supabase.from('water_intake').insert({
+        user_id: user.id,
+        amount
+      })
 
-  if (isLoading) {
+      setStats(prev => ({ ...prev, todayWater: prev.todayWater + amount }))
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const logMeal = async (mealType: string, meal: Meal) => {
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      await supabase.from('meals').insert({
+        user_id: user.id,
+        name: meal.name,
+        meal_type: mealType,
+        calories: meal.calories,
+        protein: meal.protein,
+        carbs: meal.carbs,
+        fat: meal.fat,
+        notes: meal.description
+      })
+
+      setStats(prev => ({
+        ...prev,
+        todayCalories: prev.todayCalories + meal.calories,
+        todayProtein: prev.todayProtein + meal.protein,
+        todayCarbs: prev.todayCarbs + meal.carbs,
+        todayFat: prev.todayFat + meal.fat,
+        mealsLogged: prev.mealsLogged + 1
+      }))
+
+      alert('Refeição registrada! ✅')
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const calorieProgress = Math.min((stats.todayCalories / stats.goalCalories) * 100, 100)
+  const waterProgress = Math.min((stats.todayWater / 2000) * 100, 100)
+
+  if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner size="lg" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
       </div>
     )
   }
 
   return (
-    <div className="pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Alimentação</h1>
-          <p className="text-gray-600 mt-1">
-            {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
-          </p>
+      <header className="bg-white border-b border-gray-100 px-4 py-4 sticky top-0 z-10">
+        <div className="flex items-center gap-3">
+          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
+            <ArrowLeft className="w-5 h-5 text-gray-600" />
+          </Link>
+          <div className="flex-1">
+            <h1 className="text-xl font-bold">Nutrição</h1>
+            <p className="text-sm text-gray-500">Seu plano alimentar personalizado</p>
+          </div>
+          <Link href="/scanner" className="p-2 bg-primary-100 rounded-xl">
+            <Apple className="w-5 h-5 text-primary-600" />
+          </Link>
         </div>
-        <Link
-          href="/nutrition/scan"
-          className="p-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
-        >
-          <Camera className="w-5 h-5" />
-        </Link>
-      </div>
+      </header>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-        {[
-          { key: 'today', label: 'Hoje' },
-          { key: 'history', label: 'Histórico' },
-          { key: 'plan', label: 'Plano Alimentar' },
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key as typeof activeTab)}
-            className={`px-4 py-2 rounded-full whitespace-nowrap transition-all duration-200 ${
-              activeTab === tab.key
-                ? 'bg-primary text-white shadow-md'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      <AnimatePresence mode="wait">
-        {activeTab === 'today' && (
-          <motion.div
-            key="today"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            {/* Daily Summary Card */}
-            <Card className="mb-6 bg-gradient-to-br from-primary-50 to-secondary-50">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="font-semibold text-gray-900">Resumo do Dia</h3>
-                  <p className="text-sm text-gray-500">
-                    {userPhase === 'PREGNANT' ? '🤰 Gestante' : userPhase === 'POSTPARTUM' ? '🤱 Pós-parto' : '💪 Ativa'}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-3xl font-bold text-primary-600">{todayTotals.calories}</p>
-                  <p className="text-xs text-gray-500">/ {dailyGoals.calories} kcal</p>
-                </div>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="h-3 bg-white rounded-full overflow-hidden mb-4">
-                <motion.div
-                  className={`h-full ${calorieProgress >= 100 ? 'bg-green-500' : 'bg-gradient-to-r from-primary-400 to-primary-600'}`}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${calorieProgress}%` }}
-                  transition={{ duration: 0.5 }}
-                />
-              </div>
-
-              {/* Macros */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="text-center">
-                  <p className="text-lg font-semibold text-gray-900">{todayTotals.protein}g</p>
-                  <p className="text-xs text-gray-500">Proteína</p>
-                  <div className="h-1 bg-white/50 rounded mt-1">
-                    <div className="h-full bg-green-500 rounded" style={{width: `${Math.min((todayTotals.protein / dailyGoals.protein) * 100, 100)}%`}}/>
-                  </div>
-                </div>
-                <div className="text-center">
-                  <p className="text-lg font-semibold text-gray-900">{todayTotals.carbs}g</p>
-                  <p className="text-xs text-gray-500">Carboidratos</p>
-                  <div className="h-1 bg-white/50 rounded mt-1">
-                    <div className="h-full bg-amber-500 rounded" style={{width: `${Math.min((todayTotals.carbs / dailyGoals.carbs) * 100, 100)}%`}}/>
-                  </div>
-                </div>
-                <div className="text-center">
-                  <p className="text-lg font-semibold text-gray-900">{todayTotals.fat}g</p>
-                  <p className="text-xs text-gray-500">Gorduras</p>
-                  <div className="h-1 bg-white/50 rounded mt-1">
-                    <div className="h-full bg-orange-500 rounded" style={{width: `${Math.min((todayTotals.fat / dailyGoals.fat) * 100, 100)}%`}}/>
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            {/* Meals List */}
-            <h3 className="font-semibold text-gray-900 mb-3">Refeições</h3>
-            <div className="space-y-3">
-              {MEAL_TYPES.map((mealType) => {
-                const meal = todayMeals.find(m => m.meal_type === mealType.key)
-                const Icon = mealType.icon
-
-                return (
-                  <Card key={mealType.key} className="hover:shadow-md transition-shadow">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-12 h-12 rounded-xl ${mealType.color} flex items-center justify-center`}>
-                        <Icon className="w-6 h-6" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-medium text-gray-900">{mealType.label}</h4>
-                          <span className="text-xs text-gray-400">{mealType.time}</span>
-                        </div>
-                        {meal ? (
-                          <p className="text-sm text-gray-600 line-clamp-1">{meal.description}</p>
-                        ) : (
-                          <p className="text-sm text-gray-400">Não registrado</p>
-                        )}
-                      </div>
-                      {meal ? (
-                        <div className="text-right">
-                          <p className="font-semibold text-primary-600">{meal.total_calories} kcal</p>
-                          <p className="text-xs text-gray-500">
-                            P:{meal.total_protein}g C:{meal.total_carbs}g
-                          </p>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setSelectedMealType(mealType.key)
-                            setShowAddModal(true)
-                          }}
-                          className="p-2 bg-primary-50 text-primary-600 rounded-xl hover:bg-primary-100 transition-colors"
-                        >
-                          <Plus className="w-5 h-5" />
-                        </button>
-                      )}
-                    </div>
-                  </Card>
-                )
-              })}
-            </div>
-
-            {/* Quick Actions */}
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <Link href="/nutrition/scan">
-                <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center">
-                      <Camera className="w-5 h-5 text-primary-600" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">Escanear</p>
-                      <p className="text-xs text-gray-500">Foto da refeição</p>
-                    </div>
-                  </div>
-                </Card>
-              </Link>
-
-              <button onClick={() => setShowAddModal(true)} className="text-left">
-                <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center">
-                      <Plus className="w-5 h-5 text-secondary-600" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">Adicionar</p>
-                      <p className="text-xs text-gray-500">Manualmente</p>
-                    </div>
-                  </div>
-                </Card>
-              </button>
-            </div>
-          </motion.div>
-        )}
-
-        {activeTab === 'history' && (
-          <motion.div
-            key="history"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            {meals.length === 0 ? (
-              <Card className="text-center py-12">
-                <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                <h3 className="font-medium text-gray-900 mb-2">Nenhuma refeição registrada</h3>
-                <p className="text-gray-500 text-sm">Comece a registrar suas refeições!</p>
-              </Card>
-            ) : (
-              <div className="space-y-4">
-                {Object.entries(
-                  meals.reduce((acc, meal) => {
-                    const date = meal.date
-                    if (!acc[date]) acc[date] = []
-                    acc[date].push(meal)
-                    return acc
-                  }, {} as Record<string, Meal[]>)
-                ).map(([date, dayMeals]) => {
-                  const dayTotal = dayMeals.reduce((sum, m) => sum + (m.total_calories || 0), 0)
-                  const isToday = date === new Date().toISOString().split('T')[0]
-                  
-                  return (
-                    <Card key={date}>
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-semibold text-gray-900">
-                          {isToday ? 'Hoje' : new Date(date + 'T12:00:00').toLocaleDateString('pt-BR', { 
-                            weekday: 'short', 
-                            day: 'numeric', 
-                            month: 'short' 
-                          })}
-                        </h4>
-                        <span className={`text-sm font-medium ${dayTotal >= dailyGoals.calories ? 'text-green-600' : 'text-primary-600'}`}>
-                          {dayTotal} kcal
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        {dayMeals.map((meal) => {
-                          const mealInfo = MEAL_TYPES.find(m => m.key === meal.meal_type)
-                          return (
-                            <div key={meal.id} className="flex items-center justify-between text-sm py-1">
-                              <div className="flex items-center gap-2">
-                                <span>{mealInfo?.label || meal.meal_type}:</span>
-                                <span className="text-gray-600 line-clamp-1">{meal.description}</span>
-                              </div>
-                              <span className="text-gray-500 whitespace-nowrap">{meal.total_calories} kcal</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </Card>
-                  )
-                })}
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {activeTab === 'plan' && (
-          <motion.div
-            key="plan"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            {!mealPlan ? (
-              <Card className="text-center py-12">
-                <Sparkles className="w-16 h-16 text-primary-400 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">Crie seu Plano Alimentar</h3>
-                <p className="text-gray-500 text-sm mb-6 max-w-sm mx-auto">
-                  A IA vai criar um plano personalizado baseado no seu perfil
-                  {userPhase === 'PREGNANT' && ', considerando sua fase da gestação'}
-                  {userPhase === 'POSTPARTUM' && ', ideal para o pós-parto'}
-                </p>
-                <button
-                  onClick={generateMealPlan}
-                  disabled={isGeneratingPlan}
-                  className="px-6 py-3 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors inline-flex items-center gap-2"
-                >
-                  {isGeneratingPlan ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Gerando plano...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-5 h-5" />
-                      Gerar Plano com IA
-                    </>
-                  )}
-                </button>
-              </Card>
-            ) : (
-              <div className="space-y-4">
-                {/* Plan Summary */}
-                <Card className="bg-gradient-to-br from-primary-50 to-secondary-50">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center">
-                      <Target className="w-6 h-6 text-primary-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">Seu Plano Personalizado</h3>
-                      <p className="text-sm text-gray-600">Baseado no seu perfil e objetivos</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 text-center">
-                    <div className="bg-white/60 rounded-lg py-2">
-                      <p className="text-xl font-bold text-primary-600">{mealPlan.dailyCalories || 2000}</p>
-                      <p className="text-xs text-gray-500">kcal/dia</p>
-                    </div>
-                    <div className="bg-white/60 rounded-lg py-2">
-                      <p className="text-xl font-bold text-green-600">{mealPlan.dailyProtein || 80}g</p>
-                      <p className="text-xs text-gray-500">Proteína</p>
-                    </div>
-                    <div className="bg-white/60 rounded-lg py-2">
-                      <p className="text-xl font-bold text-amber-600">{mealPlan.dailyCarbs || 250}g</p>
-                      <p className="text-xs text-gray-500">Carbs</p>
-                    </div>
-                    <div className="bg-white/60 rounded-lg py-2">
-                      <p className="text-xl font-bold text-orange-600">{mealPlan.dailyFat || 65}g</p>
-                      <p className="text-xs text-gray-500">Gordura</p>
-                    </div>
-                  </div>
-                </Card>
-
-                {/* Daily Meals */}
-                {mealPlan.meals?.slice(0, 7).map((day: any, index: number) => (
-                  <Card key={index}>
-                    <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-primary-500" />
-                      {day.day}
-                    </h4>
-                    <div className="space-y-2">
-                      {day.breakfast && (
-                        <div className="flex items-center justify-between text-sm py-1 border-b border-gray-50">
-                          <span className="text-gray-600">☕ {day.breakfast.name}</span>
-                          <span className="text-gray-500">{day.breakfast.calories} kcal</span>
-                        </div>
-                      )}
-                      {day.morningSnack && (
-                        <div className="flex items-center justify-between text-sm py-1 border-b border-gray-50">
-                          <span className="text-gray-600">🍎 {day.morningSnack.name}</span>
-                          <span className="text-gray-500">{day.morningSnack.calories} kcal</span>
-                        </div>
-                      )}
-                      {day.lunch && (
-                        <div className="flex items-center justify-between text-sm py-1 border-b border-gray-50">
-                          <span className="text-gray-600">🍽️ {day.lunch.name}</span>
-                          <span className="text-gray-500">{day.lunch.calories} kcal</span>
-                        </div>
-                      )}
-                      {day.afternoonSnack && (
-                        <div className="flex items-center justify-between text-sm py-1 border-b border-gray-50">
-                          <span className="text-gray-600">🍪 {day.afternoonSnack.name}</span>
-                          <span className="text-gray-500">{day.afternoonSnack.calories} kcal</span>
-                        </div>
-                      )}
-                      {day.dinner && (
-                        <div className="flex items-center justify-between text-sm py-1">
-                          <span className="text-gray-600">🌙 {day.dinner.name}</span>
-                          <span className="text-gray-500">{day.dinner.calories} kcal</span>
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                ))}
-
-                {/* Tips */}
-                {mealPlan.tips && mealPlan.tips.length > 0 && (
-                  <Card>
-                    <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                      💡 Dicas Personalizadas
-                    </h4>
-                    <ul className="space-y-2">
-                      {mealPlan.tips.map((tip: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
-                          <Check className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-                          {tip}
-                        </li>
-                      ))}
-                    </ul>
-                  </Card>
-                )}
-
-                {/* Regenerate Button */}
-                <button
-                  onClick={generateMealPlan}
-                  disabled={isGeneratingPlan}
-                  className="w-full py-3 border-2 border-primary text-primary rounded-xl font-medium hover:bg-primary/5 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                >
-                  {isGeneratingPlan ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-5 h-5" />
-                  )}
-                  Gerar Novo Plano
-                </button>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Add Meal Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-          <motion.div
-            initial={{ opacity: 0, y: 100 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-t-3xl sm:rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold">Adicionar Refeição</h2>
-              <button 
-                onClick={() => {
-                  setShowAddModal(false)
-                  setSelectedMealType('')
-                }} 
-                className="p-2 hover:bg-gray-100 rounded-full"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {!selectedMealType ? (
-              <div className="space-y-3">
-                <p className="text-gray-600 mb-4">Selecione o tipo de refeição:</p>
-                {MEAL_TYPES.map((type) => {
-                  const Icon = type.icon
-                  return (
-                    <button
-                      key={type.key}
-                      onClick={() => setSelectedMealType(type.key)}
-                      className="w-full flex items-center gap-4 p-4 border rounded-xl hover:border-primary hover:bg-primary/5 transition-colors"
-                    >
-                      <div className={`w-10 h-10 rounded-xl ${type.color} flex items-center justify-center`}>
-                        <Icon className="w-5 h-5" />
-                      </div>
-                      <span className="font-medium flex-1 text-left">{type.label}</span>
-                      <ChevronRight className="w-5 h-5 text-gray-400" />
-                    </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <QuickMealForm
-                mealType={selectedMealType}
-                mealLabel={MEAL_TYPES.find(m => m.key === selectedMealType)?.label || ''}
-                onSubmit={addQuickMeal}
-                onBack={() => setSelectedMealType('')}
-              />
-            )}
-          </motion.div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function QuickMealForm({ 
-  mealType, 
-  mealLabel,
-  onSubmit, 
-  onBack 
-}: { 
-  mealType: string
-  mealLabel: string
-  onSubmit: (type: string, desc: string, cal: number) => void
-  onBack: () => void 
-}) {
-  const [description, setDescription] = useState('')
-  const [calories, setCalories] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  const quickOptions = [
-    { desc: 'Refeição leve', cal: 300 },
-    { desc: 'Refeição moderada', cal: 500 },
-    { desc: 'Refeição completa', cal: 700 },
-  ]
-
-  const handleSubmit = async () => {
-    if (!description || !calories) return
-    setIsSubmitting(true)
-    await onSubmit(mealType, description, parseInt(calories))
-    setIsSubmitting(false)
-  }
-
-  return (
-    <div className="space-y-4">
-      <button onClick={onBack} className="text-primary font-medium flex items-center gap-1 mb-2">
-        ← Voltar
-      </button>
-      
-      <p className="text-gray-600">Adicionando: <strong>{mealLabel}</strong></p>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Descrição da refeição
-        </label>
-        <input
-          type="text"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Ex: Arroz, feijão, frango grelhado e salada"
-          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Calorias estimadas
-        </label>
-        <input
-          type="number"
-          value={calories}
-          onChange={(e) => setCalories(e.target.value)}
-          placeholder="Ex: 500"
-          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-      </div>
-
-      <div>
-        <p className="text-sm text-gray-500 mb-2">Ou escolha uma opção rápida:</p>
+      <div className="bg-white px-4 py-2 border-b border-gray-100">
         <div className="flex gap-2">
-          {quickOptions.map((opt) => (
+          {[
+            { id: 'hoje', label: 'Hoje', icon: Sun },
+            { id: 'plano', label: 'Plano', icon: Calendar },
+            { id: 'receitas', label: 'Receitas', icon: ChefHat },
+          ].map(tab => (
             <button
-              key={opt.cal}
-              onClick={() => {
-                setDescription(opt.desc)
-                setCalories(opt.cal.toString())
-              }}
-              className="flex-1 py-2 px-3 text-sm bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-medium transition-colors ${
+                activeTab === tab.id 
+                  ? 'bg-primary-500 text-white' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
             >
-              {opt.cal} kcal
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
             </button>
           ))}
         </div>
       </div>
 
-      <button
-        onClick={handleSubmit}
-        disabled={!description || !calories || isSubmitting}
-        className="w-full py-3 bg-primary text-white rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 mt-4"
-      >
-        {isSubmitting ? (
-          <Loader2 className="w-5 h-5 animate-spin" />
-        ) : (
-          <>
-            <Check className="w-5 h-5" />
-            Adicionar Refeição
-          </>
+      <div className="p-4">
+        <AnimatePresence mode="wait">
+          {/* TAB: HOJE */}
+          {activeTab === 'hoje' && (
+            <motion.div
+              key="hoje"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="space-y-4"
+            >
+              {/* Resumo Diário */}
+              <div className="bg-white rounded-2xl p-4 shadow-sm">
+                <h3 className="font-semibold mb-4 flex items-center gap-2">
+                  <Target className="w-5 h-5 text-primary-500" />
+                  Resumo de Hoje
+                </h3>
+                
+                {/* Calorias */}
+                <div className="mb-4">
+                  <div className="flex justify-between text-sm mb-2">
+                    <span>Calorias</span>
+                    <span className="font-medium">{stats.todayCalories} / {stats.goalCalories} kcal</span>
+                  </div>
+                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <motion.div 
+                      className={`h-full rounded-full ${calorieProgress > 100 ? 'bg-red-500' : 'bg-primary-500'}`}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${calorieProgress}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Macros */}
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <div className="bg-blue-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-blue-600 mb-1">Proteína</p>
+                    <p className="font-bold text-blue-700">{stats.todayProtein}g</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-orange-600 mb-1">Carboidratos</p>
+                    <p className="font-bold text-orange-700">{stats.todayCarbs}g</p>
+                  </div>
+                  <div className="bg-yellow-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-yellow-600 mb-1">Gorduras</p>
+                    <p className="font-bold text-yellow-700">{stats.todayFat}g</p>
+                  </div>
+                </div>
+
+                {/* Água */}
+                <div className="border-t border-gray-100 pt-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm">💧 Água</span>
+                    <span className="text-sm font-medium">{stats.todayWater}ml / 2000ml</span>
+                  </div>
+                  <div className="h-3 bg-blue-100 rounded-full overflow-hidden mb-3">
+                    <motion.div 
+                      className="h-full bg-blue-500 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${waterProgress}%` }}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    {[200, 300, 500].map(amount => (
+                      <button
+                        key={amount}
+                        onClick={() => addWater(amount)}
+                        className="flex-1 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100"
+                      >
+                        +{amount}ml
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Refeições de Hoje do Plano */}
+              {currentPlan && currentPlan.days.length > 0 && (
+                <div className="bg-white rounded-2xl p-4 shadow-sm">
+                  <h3 className="font-semibold mb-4 flex items-center gap-2">
+                    <Utensils className="w-5 h-5 text-primary-500" />
+                    Refeições Sugeridas
+                  </h3>
+                  
+                  <div className="space-y-3">
+                    {Object.entries(currentPlan.days[0]?.meals || {}).map(([key, meal]: [string, any]) => {
+                      const icons: Record<string, any> = {
+                        breakfast: { icon: Coffee, label: 'Café da Manhã', time: '07:00' },
+                        morning_snack: { icon: Cookie, label: 'Lanche Manhã', time: '10:00' },
+                        lunch: { icon: Sun, label: 'Almoço', time: '12:30' },
+                        afternoon_snack: { icon: Cookie, label: 'Lanche Tarde', time: '16:00' },
+                        dinner: { icon: Moon, label: 'Jantar', time: '19:30' },
+                      }
+                      const info = icons[key]
+                      if (!info || !meal) return null
+                      const Icon = info.icon
+
+                      return (
+                        <div key={key} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                          <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
+                            <Icon className="w-5 h-5 text-primary-600" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-medium">{info.label}</p>
+                            <p className="text-sm text-gray-500 truncate">{meal.description}</p>
+                            <p className="text-xs text-gray-400">{meal.calories} kcal • {info.time}</p>
+                          </div>
+                          <button
+                            onClick={() => logMeal(key, meal)}
+                            className="px-3 py-1 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Ações Rápidas */}
+              <div className="grid grid-cols-2 gap-3">
+                <Link href="/scanner" className="bg-white rounded-2xl p-4 shadow-sm flex flex-col items-center text-center">
+                  <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center mb-2">
+                    <Apple className="w-6 h-6 text-purple-600" />
+                  </div>
+                  <span className="font-medium">Escanear</span>
+                  <span className="text-xs text-gray-500">Código de barras</span>
+                </Link>
+                
+                <Link href="/recipes" className="bg-white rounded-2xl p-4 shadow-sm flex flex-col items-center text-center">
+                  <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center mb-2">
+                    <ChefHat className="w-6 h-6 text-orange-600" />
+                  </div>
+                  <span className="font-medium">Receitas</span>
+                  <span className="text-xs text-gray-500">Ideias saudáveis</span>
+                </Link>
+              </div>
+            </motion.div>
+          )}
+
+          {/* TAB: PLANO */}
+          {activeTab === 'plano' && (
+            <motion.div
+              key="plano"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-4"
+            >
+              {!currentPlan ? (
+                <div className="bg-white rounded-2xl p-8 shadow-sm text-center">
+                  <div className="w-20 h-20 rounded-full bg-primary-100 flex items-center justify-center mx-auto mb-4">
+                    <Sparkles className="w-10 h-10 text-primary-500" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">Crie seu Plano Alimentar</h3>
+                  <p className="text-gray-500 mb-6">
+                    A IA irá criar um plano personalizado baseado no seu perfil e objetivos
+                  </p>
+                  <button
+                    onClick={() => setShowGenerateModal(true)}
+                    disabled={generating}
+                    className="btn-primary px-8 py-3 rounded-xl flex items-center gap-2 mx-auto"
+                  >
+                    {generating ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Gerando...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-5 h-5" />
+                        Gerar Plano com IA
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Info do Plano */}
+                  <div className="bg-gradient-to-r from-primary-500 to-primary-600 rounded-2xl p-4 text-white">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-bold">{currentPlan.name}</h3>
+                      <button
+                        onClick={() => setShowGenerateModal(true)}
+                        className="p-2 bg-white/20 rounded-lg hover:bg-white/30"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <p className="text-white/80 text-sm">
+                      {currentPlan.duration} dias • Criado em {new Date(currentPlan.created_at).toLocaleDateString('pt-BR')}
+                    </p>
+                  </div>
+
+                  {/* Seletor de Dias */}
+                  <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
+                    {currentPlan.days.map((day, index) => (
+                      <button
+                        key={index}
+                        onClick={() => setSelectedDay(index)}
+                        className={`flex-shrink-0 w-16 py-3 rounded-xl text-center transition-colors ${
+                          selectedDay === index
+                            ? 'bg-primary-500 text-white'
+                            : 'bg-white text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        <p className="text-xs opacity-70">Dia</p>
+                        <p className="text-lg font-bold">{day.day}</p>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Refeições do Dia */}
+                  {currentPlan.days[selectedDay] && (
+                    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                      <div className="p-4 border-b border-gray-100">
+                        <div className="flex justify-between items-center">
+                          <h3 className="font-semibold">Dia {currentPlan.days[selectedDay].day}</h3>
+                          <span className="text-sm text-primary-600 font-medium">
+                            {currentPlan.days[selectedDay].totalCalories} kcal total
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="divide-y divide-gray-100">
+                        {Object.entries(currentPlan.days[selectedDay].meals).map(([key, meal]: [string, any]) => {
+                          const labels: Record<string, string> = {
+                            breakfast: '☀️ Café da Manhã',
+                            morning_snack: '🍎 Lanche Manhã',
+                            lunch: '🍽️ Almoço',
+                            afternoon_snack: '🥤 Lanche Tarde',
+                            dinner: '🌙 Jantar',
+                          }
+                          if (!meal) return null
+
+                          return (
+                            <div key={key} className="p-4">
+                              <p className="text-sm text-gray-500 mb-1">{labels[key]}</p>
+                              <p className="font-medium">{meal.description}</p>
+                              <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                                <span>{meal.calories} kcal</span>
+                                <span>P: {meal.protein || 0}g</span>
+                                <span>C: {meal.carbs || 0}g</span>
+                                <span>G: {meal.fat || 0}g</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      {currentPlan.days[selectedDay].tips && (
+                        <div className="p-4 bg-yellow-50 border-t border-yellow-100">
+                          <p className="text-sm text-yellow-800">
+                            💡 {currentPlan.days[selectedDay].tips}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Lista de Compras */}
+                  {currentPlan.shopping_list && currentPlan.shopping_list.length > 0 && (
+                    <div className="bg-white rounded-2xl p-4 shadow-sm">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-semibold flex items-center gap-2">
+                          <ShoppingCart className="w-5 h-5 text-primary-500" />
+                          Lista de Compras
+                        </h3>
+                        <Link href="/shopping" className="text-sm text-primary-600">
+                          Ver completa →
+                        </Link>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {currentPlan.shopping_list.slice(0, 10).map((item, i) => (
+                          <span key={i} className="px-3 py-1 bg-gray-100 rounded-full text-sm">
+                            {item}
+                          </span>
+                        ))}
+                        {currentPlan.shopping_list.length > 10 && (
+                          <span className="px-3 py-1 bg-primary-100 text-primary-600 rounded-full text-sm">
+                            +{currentPlan.shopping_list.length - 10} itens
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </motion.div>
+          )}
+
+          {/* TAB: RECEITAS */}
+          {activeTab === 'receitas' && (
+            <motion.div
+              key="receitas"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-4"
+            >
+              <div className="bg-white rounded-2xl p-4 shadow-sm">
+                <Link href="/recipes" className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center">
+                    <ChefHat className="w-8 h-8 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold">Receitas Saudáveis</h3>
+                    <p className="text-sm text-gray-500">Explore receitas para cada refeição</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-gray-400" />
+                </Link>
+              </div>
+
+              <div className="bg-white rounded-2xl p-4 shadow-sm">
+                <h3 className="font-semibold mb-4">Categorias de Receitas</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { name: 'Café da Manhã', icon: '🌅', count: 25 },
+                    { name: 'Almoço', icon: '🍽️', count: 40 },
+                    { name: 'Jantar', icon: '🌙', count: 35 },
+                    { name: 'Lanches', icon: '🍎', count: 20 },
+                    { name: 'Sobremesas', icon: '🍰', count: 15 },
+                    { name: 'Gestantes', icon: '🤰', count: 30 },
+                  ].map(cat => (
+                    <Link
+                      key={cat.name}
+                      href={`/recipes?category=${cat.name.toLowerCase()}`}
+                      className="p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
+                    >
+                      <span className="text-2xl mb-2 block">{cat.icon}</span>
+                      <p className="font-medium">{cat.name}</p>
+                      <p className="text-xs text-gray-500">{cat.count} receitas</p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Modal Gerar Plano */}
+      <AnimatePresence>
+        {showGenerateModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+            onClick={() => setShowGenerateModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl p-6 w-full max-w-md"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="text-xl font-bold mb-4">Gerar Plano Alimentar</h3>
+              <p className="text-gray-600 mb-6">
+                Escolha a duração do seu plano personalizado
+              </p>
+
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                {[7, 15, 30].map(days => (
+                  <button
+                    key={days}
+                    onClick={() => setPlanDuration(days)}
+                    className={`p-4 rounded-xl border-2 transition-colors ${
+                      planDuration === days
+                        ? 'border-primary-500 bg-primary-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <p className="text-2xl font-bold text-primary-600">{days}</p>
+                    <p className="text-sm text-gray-500">dias</p>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowGenerateModal(false)}
+                  className="flex-1 py-3 border border-gray-200 rounded-xl font-medium"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={generatePlan}
+                  disabled={generating}
+                  className="flex-1 py-3 bg-primary-500 text-white rounded-xl font-medium flex items-center justify-center gap-2"
+                >
+                  {generating ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      <Sparkles className="w-5 h-5" />
+                      Gerar
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
-      </button>
+      </AnimatePresence>
     </div>
   )
 }
