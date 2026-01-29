@@ -222,7 +222,7 @@ export default function WorkoutTimerPage() {
                   cy="96"
                   r="88"
                   fill="none"
-                  stroke={isResting ? '#3b82f6' : '#E8A5B3'}
+                  stroke={isResting ? '#3b82f6' : '#b87389'}
                   strokeWidth="12"
                   strokeLinecap="round"
                   strokeDasharray={553}

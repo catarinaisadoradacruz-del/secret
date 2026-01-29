@@ -21,7 +21,7 @@ interface WeightChartProps {
 
 export function WeightChart({
   data,
-  color = '#E8A5B3',
+  color = '#b87389',
   showGrid = true,
   height = 200,
 }: WeightChartProps) {
