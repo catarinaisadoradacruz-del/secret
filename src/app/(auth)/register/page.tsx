@@ -31,52 +31,86 @@ export default function RegisterPage() {
       
       // 1. Criar usuário no auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
+        email: email.toLowerCase().trim(),
         password,
         options: { 
-          data: { name },
-          emailRedirectTo: `${window.location.origin}/auth/callback`
+          data: { name: name.trim() }
         }
       })
 
       if (authError) {
         console.error('Auth error:', authError)
-        if (authError.message.includes('already registered') || authError.message.includes('already exists')) {
-          setError('Este email já está cadastrado. Tente fazer login.')
-        } else if (authError.message.includes('valid email')) {
-          setError('Por favor, insira um email válido.')
-        } else {
-          setError('Erro ao criar conta: ' + authError.message)
+        if (authError.message.includes('already registered') || 
+            authError.message.includes('User already registered') ||
+            authError.message.includes('already exists')) {
+          setError('Este email já está cadastrado. Faça login.')
+          setLoading(false)
+          return
         }
+        setError(authError.message)
+        setLoading(false)
         return
       }
 
-      // 2. Verificar se usuário foi criado
       if (!authData.user) {
-        setError('Erro ao criar usuário. Tente novamente.')
+        setError('Erro ao criar conta. Tente novamente.')
+        setLoading(false)
         return
       }
 
-      // 3. Criar registro na tabela users com upsert (evita erro de duplicidade)
-      const { error: dbError } = await supabase.from('users').upsert({
+      // 2. Verificar se já existe na tabela users
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', authData.user.id)
+        .single()
+
+      if (existingUser) {
+        // Usuário já existe, só redireciona
+        router.push('/dashboard')
+        router.refresh()
+        return
+      }
+
+      // 3. Criar na tabela users
+      const { error: insertError } = await supabase.from('users').insert({
         id: authData.user.id,
         email: email.toLowerCase().trim(),
         name: name.trim(),
         phase: 'TRYING',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }, { 
-        onConflict: 'id',
-        ignoreDuplicates: false 
+        onboarding_completed: false,
+        premium: false,
+        notifications_enabled: true,
+        notification_meals: true,
+        notification_workout: true,
+        notification_water: true,
+        notification_appointments: true,
+        language: 'pt-BR',
+        theme: 'light',
+        exercise_level: 'beginner',
+        cycle_length: 28,
+        workout_duration_preference: 30
       })
 
-      if (dbError) {
-        console.error('DB error:', dbError)
-        // Mesmo com erro no DB, a conta foi criada no auth
-        // Vamos redirecionar e tentar criar o perfil depois
+      if (insertError) {
+        console.error('Insert error:', insertError)
+        // Se for erro de duplicidade, ignora e continua
+        if (!insertError.message.includes('duplicate') && !insertError.message.includes('unique')) {
+          // Erro real, mas conta foi criada no auth
+          // Tenta fazer login e criar perfil depois
+        }
       }
 
-      // 4. Redirecionar para onboarding ou dashboard
+      // 4. Criar pontos iniciais
+      await supabase.from('user_points').insert({
+        user_id: authData.user.id,
+        total_points: 0,
+        current_streak: 0,
+        longest_streak: 0,
+        level: 1
+      }).catch(() => {})
+
+      // 5. Redirecionar
       router.push('/onboarding')
       router.refresh()
 
@@ -92,20 +126,21 @@ export default function RegisterPage() {
     setLoading(true)
     try {
       const supabase = createClient()
-      await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo: `${window.location.origin}/auth/callback` }
       })
+      if (error) setError('Erro ao conectar com Google')
     } catch {
       setError('Erro ao conectar com Google')
+    } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="w-full max-w-md mx-auto p-4">
-      <div className="bg-white rounded-2xl shadow-sm p-6">
-        {/* Logo */}
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm p-6">
         <div className="flex items-center justify-center gap-2 mb-6">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center">
             <Heart className="w-5 h-5 text-white" />
@@ -117,7 +152,9 @@ export default function RegisterPage() {
         <p className="text-gray-500 text-center text-sm mb-6">Comece sua jornada de bem-estar</p>
 
         {error && (
-          <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-4">{error}</div>
+          <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-sm mb-4">
+            {error}
+          </div>
         )}
 
         <form onSubmit={handleRegister} className="space-y-4">
@@ -131,7 +168,7 @@ export default function RegisterPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Seu nome"
                 required
-                className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
               />
             </div>
           </div>
@@ -146,7 +183,7 @@ export default function RegisterPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="seu@email.com"
                 required
-                className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
               />
             </div>
           </div>
@@ -162,7 +199,7 @@ export default function RegisterPage() {
                 placeholder="Mínimo 6 caracteres"
                 required
                 minLength={6}
-                className="w-full pl-10 pr-12 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className="w-full pl-10 pr-12 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
               />
               <button
                 type="button"
@@ -177,7 +214,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-primary-500 text-white py-3 rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full bg-primary-500 hover:bg-primary-600 text-white py-3 rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
           >
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Criar Conta'}
           </button>
@@ -192,7 +229,7 @@ export default function RegisterPage() {
         <button
           onClick={handleGoogleRegister}
           disabled={loading}
-          className="w-full border border-gray-200 py-3 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-gray-50"
+          className="w-full border border-gray-200 py-3 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -205,7 +242,7 @@ export default function RegisterPage() {
 
         <p className="text-center text-sm text-gray-500 mt-4">
           Já tem uma conta?{' '}
-          <Link href="/login" className="text-primary-600 font-medium">Entrar</Link>
+          <Link href="/login" className="text-primary-600 font-medium hover:underline">Entrar</Link>
         </p>
       </div>
     </div>
