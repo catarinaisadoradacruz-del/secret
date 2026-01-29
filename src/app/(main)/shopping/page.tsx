@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, ShoppingCart, Trash2, Sparkles, Check, X, ChevronDown, Loader2 } from 'lucide-react'
+import { Plus, ShoppingCart, Trash2, Sparkles, Check, X, ChevronDown, Loader2, Edit2 } from 'lucide-react'
 import { Card, LoadingSpinner } from '@/components/ui'
 import { createClient } from '@/lib/supabase/client'
 
 interface ShoppingItem {
   id: string
   name: string
-  quantity: number
+  quantity: string
   category: string
   checked: boolean
   list_id: string
@@ -71,21 +71,28 @@ export default function ShoppingPage() {
         return
       }
 
-      // Buscar listas
+      // Buscar listas do usuário
       const { data: listsData } = await supabase
         .from('shopping_lists')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
 
-      // Buscar itens
+      if (!listsData || listsData.length === 0) {
+        setLists([])
+        setIsLoading(false)
+        return
+      }
+
+      // Buscar itens de todas as listas do usuário
+      const listIds = listsData.map(list => list.id)
       const { data: itemsData } = await supabase
         .from('shopping_items')
         .select('*')
-        .eq('user_id', user.id)
+        .in('list_id', listIds)
 
-      // Combinar
-      const combinedLists = (listsData || []).map(list => ({
+      // Combinar listas com seus itens
+      const combinedLists = listsData.map(list => ({
         ...list,
         items: (itemsData || []).filter(item => item.list_id === list.id)
       }))
@@ -95,7 +102,7 @@ export default function ShoppingPage() {
         setExpandedLists([combinedLists[0].id])
       }
     } catch (error) {
-      console.error('Erro:', error)
+      console.error('Erro ao carregar listas:', error)
     } finally {
       setIsLoading(false)
     }
@@ -117,6 +124,8 @@ export default function ShoppingPage() {
         .select()
         .single()
 
+      if (error) throw error
+
       if (data) {
         setLists(prev => [{ ...data, items: [] }, ...prev])
         setExpandedLists(prev => [data.id, ...prev])
@@ -124,7 +133,7 @@ export default function ShoppingPage() {
       setShowNewListModal(false)
       setNewListName('')
     } catch (error) {
-      console.error('Erro:', error)
+      console.error('Erro ao criar lista:', error)
     }
   }
 
@@ -134,22 +143,21 @@ export default function ShoppingPage() {
 
     try {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
 
-      if (!user) return
-
+      // Inserir item SEM user_id (a tabela não tem essa coluna)
       const { data, error } = await supabase
         .from('shopping_items')
         .insert({
-          user_id: user.id,
           list_id: selectedListId,
           name: newItem.name.trim(),
-          quantity: parseInt(newItem.quantity) || 1,
+          quantity: newItem.quantity || '1',
           category: newItem.category,
           checked: false,
         })
         .select()
         .single()
+
+      if (error) throw error
 
       if (data) {
         setLists(prev => prev.map(list => 
@@ -161,7 +169,7 @@ export default function ShoppingPage() {
       setShowAddItemModal(false)
       setNewItem({ name: '', quantity: '1', category: 'outros' })
     } catch (error) {
-      console.error('Erro:', error)
+      console.error('Erro ao adicionar item:', error)
     }
   }
 
@@ -170,22 +178,20 @@ export default function ShoppingPage() {
 
     try {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
 
-      if (!user) return
-
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('shopping_items')
         .insert({
-          user_id: user.id,
           list_id: selectedListId,
           name: suggestion.name,
-          quantity: 1,
+          quantity: '1',
           category: suggestion.category,
           checked: false,
         })
         .select()
         .single()
+
+      if (error) throw error
 
       if (data) {
         setLists(prev => prev.map(list => 
@@ -195,421 +201,447 @@ export default function ShoppingPage() {
         ))
       }
     } catch (error) {
-      console.error('Erro:', error)
+      console.error('Erro ao adicionar item rápido:', error)
     }
   }
 
-  const toggleItem = async (itemId: string, listId: string, checked: boolean) => {
-    // Atualização otimista
-    setLists(prev => prev.map(list => 
-      list.id === listId 
-        ? { ...list, items: list.items.map(item => 
-            item.id === itemId ? { ...item, checked } : item
-          )}
-        : list
-    ))
-
+  const handleToggleItem = async (listId: string, itemId: string, checked: boolean) => {
     try {
       const supabase = createClient()
+
       await supabase
         .from('shopping_items')
-        .update({ checked })
+        .update({ checked: !checked })
         .eq('id', itemId)
+
+      setLists(prev => prev.map(list => 
+        list.id === listId 
+          ? {
+              ...list,
+              items: list.items.map(item =>
+                item.id === itemId ? { ...item, checked: !checked } : item
+              )
+            }
+          : list
+      ))
     } catch (error) {
-      console.error('Erro:', error)
+      console.error('Erro ao atualizar item:', error)
     }
   }
 
-  const deleteItem = async (itemId: string, listId: string) => {
-    setLists(prev => prev.map(list => 
-      list.id === listId 
-        ? { ...list, items: list.items.filter(item => item.id !== itemId) }
-        : list
-    ))
-
+  const handleDeleteItem = async (listId: string, itemId: string) => {
     try {
       const supabase = createClient()
+
       await supabase
         .from('shopping_items')
         .delete()
         .eq('id', itemId)
+
+      setLists(prev => prev.map(list => 
+        list.id === listId 
+          ? { ...list, items: list.items.filter(item => item.id !== itemId) }
+          : list
+      ))
     } catch (error) {
-      console.error('Erro:', error)
+      console.error('Erro ao deletar item:', error)
     }
   }
 
-  const deleteList = async (listId: string) => {
-    if (!confirm('Excluir esta lista e todos os itens?')) return
-
-    setLists(prev => prev.filter(list => list.id !== listId))
+  const handleDeleteList = async (listId: string) => {
+    if (!confirm('Tem certeza que deseja excluir esta lista?')) return
 
     try {
       const supabase = createClient()
-      await supabase.from('shopping_items').delete().eq('list_id', listId)
-      await supabase.from('shopping_lists').delete().eq('id', listId)
+
+      // Deletar itens da lista primeiro
+      await supabase
+        .from('shopping_items')
+        .delete()
+        .eq('list_id', listId)
+
+      // Depois deletar a lista
+      await supabase
+        .from('shopping_lists')
+        .delete()
+        .eq('id', listId)
+
+      setLists(prev => prev.filter(list => list.id !== listId))
     } catch (error) {
-      console.error('Erro:', error)
+      console.error('Erro ao deletar lista:', error)
     }
   }
 
-  const generateWithAI = async (listId: string) => {
-    setIsGenerating(true)
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: 'Sugira uma lista de compras saudável para uma gestante com 10 itens essenciais. Responda APENAS com os nomes dos itens separados por vírgula, sem explicações.',
-          history: []
-        })
-      })
-
-      const data = await response.json()
-      if (data.response) {
-        const items = data.response.split(',').map((i: string) => i.trim()).filter(Boolean).slice(0, 10)
-        
-        const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
-
-        if (user) {
-          for (const itemName of items) {
-            const { data: newItem } = await supabase
-              .from('shopping_items')
-              .insert({
-                user_id: user.id,
-                list_id: listId,
-                name: itemName,
-                quantity: 1,
-                category: 'outros',
-                checked: false,
-              })
-              .select()
-              .single()
-
-            if (newItem) {
-              setLists(prev => prev.map(list => 
-                list.id === listId 
-                  ? { ...list, items: [...list.items, newItem] }
-                  : list
-              ))
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Erro:', error)
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-  const toggleExpanded = (listId: string) => {
+  const toggleListExpanded = (listId: string) => {
     setExpandedLists(prev => 
-      prev.includes(listId) 
+      prev.includes(listId)
         ? prev.filter(id => id !== listId)
         : [...prev, listId]
     )
   }
 
-  const getCategoryInfo = (category: string) => {
-    return CATEGORIES.find(c => c.value === category) || CATEGORIES[CATEGORIES.length - 1]
+  const generateAIList = async () => {
+    setIsGenerating(true)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+
+      if (!user) return
+
+      // Criar lista com IA
+      const response = await fetch('/api/shopping/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id })
+      })
+
+      if (response.ok) {
+        await loadLists()
+      }
+    } catch (error) {
+      console.error('Erro ao gerar lista:', error)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const getCategoryInfo = (categoryValue: string) => {
+    return CATEGORIES.find(c => c.value === categoryValue) || CATEGORIES[6]
   }
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner size="lg" />
+      <div className="flex items-center justify-center min-h-screen">
+        <LoadingSpinner />
       </div>
     )
   }
 
   return (
-    <div className="pb-24">
+    <div className="p-4 space-y-6 pb-24">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Lista de Compras</h1>
-          <p className="text-gray-600 mt-1">Organize suas compras com IA</p>
+          <h1 className="text-2xl font-display font-bold">Lista de Compras</h1>
+          <p className="text-text-secondary">Organize suas compras</p>
         </div>
+        <button 
+          onClick={generateAIList}
+          disabled={isGenerating}
+          className="btn-secondary p-3 rounded-xl"
+        >
+          {isGenerating ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Sparkles className="w-5 h-5" />
+          )}
+        </button>
+      </header>
+
+      {/* Ações Rápidas */}
+      <div className="flex gap-3">
         <button
           onClick={() => setShowNewListModal(true)}
-          className="px-4 py-2 bg-primary text-white rounded-xl font-medium flex items-center gap-1 hover:bg-primary/90 transition-colors"
+          className="flex-1 btn-primary py-3 rounded-xl flex items-center justify-center gap-2"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-5 h-5" />
           Nova Lista
+        </button>
+        <button
+          onClick={generateAIList}
+          disabled={isGenerating}
+          className="flex-1 btn-secondary py-3 rounded-xl flex items-center justify-center gap-2"
+        >
+          <Sparkles className="w-5 h-5" />
+          Gerar com IA
         </button>
       </div>
 
-      {/* Lists */}
+      {/* Listas */}
       {lists.length === 0 ? (
-        <Card className="text-center py-12">
-          <ShoppingCart className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Nenhuma lista</h3>
-          <p className="text-gray-500 mb-4">Crie sua primeira lista de compras</p>
+        <div className="card text-center py-12">
+          <ShoppingCart className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+          <h3 className="text-lg font-medium mb-2">Nenhuma lista ainda</h3>
+          <p className="text-text-secondary mb-4">Crie sua primeira lista de compras!</p>
           <button
             onClick={() => setShowNewListModal(true)}
-            className="px-6 py-2 bg-primary text-white rounded-xl font-medium"
+            className="btn-primary px-6 py-3"
           >
-            Criar lista
+            <Plus className="w-5 h-5 mr-2" />
+            Criar Lista
           </button>
-        </Card>
+        </div>
       ) : (
         <div className="space-y-4">
-          {lists.map((list) => {
-            const isExpanded = expandedLists.includes(list.id)
-            const checkedCount = list.items.filter(i => i.checked).length
-            const totalCount = list.items.length
-            const progress = totalCount > 0 ? (checkedCount / totalCount) * 100 : 0
-
-            return (
-              <motion.div
-                key={list.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
+          {lists.map(list => (
+            <motion.div
+              key={list.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="card overflow-hidden"
+            >
+              {/* Header da Lista */}
+              <div 
+                className="flex items-center justify-between p-4 cursor-pointer"
+                onClick={() => toggleListExpanded(list.id)}
               >
-                <Card>
-                  {/* List Header */}
-                  <div 
-                    className="flex items-center justify-between cursor-pointer"
-                    onClick={() => toggleExpanded(list.id)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                        <ShoppingCart className="w-5 h-5 text-primary" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{list.name}</h3>
-                        <p className="text-sm text-gray-500">{checkedCount}/{totalCount} itens</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {progress > 0 && (
-                        <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-primary transition-all" 
-                            style={{ width: `${progress}%` }}
-                          />
-                        </div>
-                      )}
-                      <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                    </div>
+                <div className="flex items-center gap-3">
+                  <ShoppingCart className="w-5 h-5 text-primary-500" />
+                  <div>
+                    <h3 className="font-semibold">{list.name}</h3>
+                    <p className="text-sm text-text-secondary">
+                      {list.items.filter(i => i.checked).length}/{list.items.length} itens
+                    </p>
                   </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteList(list.id)
+                    }}
+                    className="p-2 hover:bg-red-50 rounded-lg text-red-500"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                  <ChevronDown 
+                    className={`w-5 h-5 transition-transform ${
+                      expandedLists.includes(list.id) ? 'rotate-180' : ''
+                    }`}
+                  />
+                </div>
+              </div>
 
-                  {/* List Items */}
-                  <AnimatePresence>
-                    {isExpanded && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                          {/* Action Buttons */}
-                          <div className="flex gap-2 mb-4">
+              {/* Itens da Lista */}
+              <AnimatePresence>
+                {expandedLists.includes(list.id) && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="border-t border-gray-100"
+                  >
+                    {/* Botão Adicionar Item */}
+                    <button
+                      onClick={() => {
+                        setSelectedListId(list.id)
+                        setShowAddItemModal(true)
+                      }}
+                      className="w-full p-3 flex items-center gap-2 text-primary-600 hover:bg-primary-50 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Adicionar item
+                    </button>
+
+                    {/* Lista de Itens */}
+                    <div className="divide-y divide-gray-50">
+                      {list.items.map(item => {
+                        const category = getCategoryInfo(item.category)
+                        return (
+                          <div 
+                            key={item.id}
+                            className={`flex items-center gap-3 p-3 ${
+                              item.checked ? 'bg-gray-50' : ''
+                            }`}
+                          >
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setSelectedListId(list.id)
-                                setShowAddItemModal(true)
-                              }}
-                              className="flex-1 py-2 bg-primary/10 text-primary rounded-xl font-medium text-sm flex items-center justify-center gap-1 hover:bg-primary/20 transition-colors"
+                              onClick={() => handleToggleItem(list.id, item.id, item.checked)}
+                              className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                item.checked 
+                                  ? 'bg-primary-500 border-primary-500' 
+                                  : 'border-gray-300 hover:border-primary-500'
+                              }`}
                             >
-                              <Plus className="w-4 h-4" />
-                              Adicionar Item
+                              {item.checked && <Check className="w-4 h-4 text-white" />}
                             </button>
+                            <div className="flex-1">
+                              <p className={`font-medium ${item.checked ? 'line-through text-gray-400' : ''}`}>
+                                {item.name}
+                              </p>
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className={`px-2 py-0.5 rounded-full ${category.color}`}>
+                                  {category.label}
+                                </span>
+                                {item.quantity && item.quantity !== '1' && (
+                                  <span className="text-text-secondary">Qtd: {item.quantity}</span>
+                                )}
+                              </div>
+                            </div>
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                generateWithAI(list.id)
-                              }}
-                              disabled={isGenerating}
-                              className="flex-1 py-2 bg-secondary/10 text-secondary rounded-xl font-medium text-sm flex items-center justify-center gap-1 hover:bg-secondary/20 transition-colors disabled:opacity-50"
+                              onClick={() => handleDeleteItem(list.id, item.id)}
+                              className="p-2 hover:bg-red-50 rounded-lg text-red-400"
                             >
-                              {isGenerating ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <Sparkles className="w-4 h-4" />
-                              )}
-                              Sugerir com IA
+                              <X className="w-4 h-4" />
                             </button>
                           </div>
+                        )
+                      })}
+                    </div>
 
-                          {/* Items */}
-                          {list.items.length === 0 ? (
-                            <p className="text-center text-gray-400 py-4">Nenhum item ainda</p>
-                          ) : (
-                            <div className="space-y-2">
-                              {list.items.map((item) => {
-                                const catInfo = getCategoryInfo(item.category)
-                                return (
-                                  <div 
-                                    key={item.id}
-                                    className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-xl"
-                                  >
-                                    <label className="flex items-center gap-3 cursor-pointer flex-1">
-                                      <input
-                                        type="checkbox"
-                                        checked={item.checked}
-                                        onChange={(e) => {
-                                          e.stopPropagation()
-                                          toggleItem(item.id, list.id, e.target.checked)
-                                        }}
-                                        className="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
-                                      />
-                                      <span className={item.checked ? 'line-through text-gray-400' : 'text-gray-700'}>
-                                        {item.name}
-                                        {item.quantity > 1 && <span className="text-gray-400 ml-1">x{item.quantity}</span>}
-                                      </span>
-                                    </label>
-                                    <div className="flex items-center gap-2">
-                                      <span className={`px-2 py-0.5 rounded-full text-xs ${catInfo.color}`}>
-                                        {catInfo.label.split(' ')[0]}
-                                      </span>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          deleteItem(item.id, list.id)
-                                        }}
-                                        className="p-1 hover:bg-red-50 rounded-full text-red-400"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          )}
-
-                          {/* Delete List Button */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              deleteList(list.id)
-                            }}
-                            className="w-full mt-4 py-2 text-red-500 text-sm font-medium hover:bg-red-50 rounded-xl transition-colors"
-                          >
-                            Excluir lista
-                          </button>
+                    {/* Sugestões Rápidas */}
+                    {list.items.length === 0 && (
+                      <div className="p-4">
+                        <p className="text-sm text-text-secondary mb-3">Sugestões rápidas:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {QUICK_SUGGESTIONS.slice(0, 6).map((suggestion, i) => (
+                            <button
+                              key={i}
+                              onClick={() => {
+                                setSelectedListId(list.id)
+                                handleQuickAdd(suggestion)
+                              }}
+                              className="px-3 py-1.5 bg-gray-100 hover:bg-primary-100 rounded-full text-sm transition-colors"
+                            >
+                              + {suggestion.name}
+                            </button>
+                          ))}
                         </div>
-                      </motion.div>
+                      </div>
                     )}
-                  </AnimatePresence>
-                </Card>
-              </motion.div>
-            )
-          })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          ))}
         </div>
       )}
 
-      {/* New List Modal */}
-      {showNewListModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      {/* Modal Nova Lista */}
+      <AnimatePresence>
+        {showNewListModal && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl p-6 w-full max-w-md"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center"
+            onClick={() => setShowNewListModal(false)}
           >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Nova Lista</h2>
-              <button onClick={() => setShowNewListModal(false)} className="p-1 hover:bg-gray-100 rounded-full">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateList}>
-              <input
-                type="text"
-                value={newListName}
-                onChange={(e) => setNewListName(e.target.value)}
-                placeholder="Ex: Compras da semana"
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary mb-4"
-                autoFocus
-              />
-              <button
-                type="submit"
-                disabled={!newListName.trim()}
-                className="w-full py-3 bg-primary text-white rounded-xl font-medium disabled:opacity-50"
-              >
-                Criar lista
-              </button>
-            </form>
-          </motion.div>
-        </div>
-      )}
-
-      {/* Add Item Modal */}
-      {showAddItemModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Adicionar Item</h2>
-              <button onClick={() => setShowAddItemModal(false)} className="p-1 hover:bg-gray-100 rounded-full">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Quick Suggestions */}
-            <div className="mb-4">
-              <p className="text-sm font-medium text-gray-700 mb-2">Sugestões rápidas</p>
-              <div className="flex flex-wrap gap-2">
-                {QUICK_SUGGESTIONS.slice(0, 8).map((sug, i) => (
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              onClick={e => e.stopPropagation()}
+              className="bg-white w-full max-w-lg rounded-t-3xl p-6"
+            >
+              <h2 className="text-xl font-bold mb-4">Nova Lista</h2>
+              <form onSubmit={handleCreateList}>
+                <input
+                  type="text"
+                  value={newListName}
+                  onChange={e => setNewListName(e.target.value)}
+                  placeholder="Nome da lista..."
+                  className="w-full p-4 border border-gray-200 rounded-xl mb-4 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  autoFocus
+                />
+                <div className="flex gap-3">
                   <button
-                    key={i}
-                    onClick={() => handleQuickAdd(sug)}
-                    className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-full text-sm hover:bg-gray-200 transition-colors"
+                    type="button"
+                    onClick={() => setShowNewListModal(false)}
+                    className="flex-1 btn-secondary py-3"
                   >
-                    + {sug.name}
+                    Cancelar
                   </button>
-                ))}
-              </div>
-            </div>
+                  <button
+                    type="submit"
+                    className="flex-1 btn-primary py-3"
+                  >
+                    Criar
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <div className="border-t border-gray-100 pt-4">
-              <p className="text-sm font-medium text-gray-700 mb-2">Ou adicione manualmente</p>
+      {/* Modal Adicionar Item */}
+      <AnimatePresence>
+        {showAddItemModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center"
+            onClick={() => setShowAddItemModal(false)}
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              onClick={e => e.stopPropagation()}
+              className="bg-white w-full max-w-lg rounded-t-3xl p-6 max-h-[80vh] overflow-y-auto"
+            >
+              <h2 className="text-xl font-bold mb-4">Adicionar Item</h2>
               <form onSubmit={handleAddItem} className="space-y-4">
                 <input
                   type="text"
                   value={newItem.name}
-                  onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                  placeholder="Nome do item"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+                  onChange={e => setNewItem(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Nome do item..."
+                  className="w-full p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  autoFocus
                 />
-                <div className="grid grid-cols-2 gap-4">
+                
+                <div className="flex gap-3">
                   <input
-                    type="number"
+                    type="text"
                     value={newItem.quantity}
-                    onChange={(e) => setNewItem({ ...newItem, quantity: e.target.value })}
+                    onChange={e => setNewItem(prev => ({ ...prev, quantity: e.target.value }))}
                     placeholder="Qtd"
-                    min="1"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="w-24 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   />
                   <select
                     value={newItem.category}
-                    onChange={(e) => setNewItem({ ...newItem, category: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                    onChange={e => setNewItem(prev => ({ ...prev, category: e.target.value }))}
+                    className="flex-1 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   >
-                    {CATEGORIES.map((cat) => (
+                    {CATEGORIES.map(cat => (
                       <option key={cat.value} value={cat.value}>{cat.label}</option>
                     ))}
                   </select>
                 </div>
-                <button
-                  type="submit"
-                  disabled={!newItem.name.trim()}
-                  className="w-full py-3 bg-primary text-white rounded-xl font-medium disabled:opacity-50"
-                >
-                  Adicionar
-                </button>
+
+                {/* Sugestões */}
+                <div>
+                  <p className="text-sm text-text-secondary mb-2">Sugestões:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_SUGGESTIONS.map((suggestion, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setNewItem(prev => ({ 
+                          ...prev, 
+                          name: suggestion.name, 
+                          category: suggestion.category 
+                        }))}
+                        className="px-3 py-1.5 bg-gray-100 hover:bg-primary-100 rounded-full text-sm transition-colors"
+                      >
+                        {suggestion.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddItemModal(false)}
+                    className="flex-1 btn-secondary py-3"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 btn-primary py-3"
+                  >
+                    Adicionar
+                  </button>
+                </div>
               </form>
-            </div>
+            </motion.div>
           </motion.div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   )
 }
