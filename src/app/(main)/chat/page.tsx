@@ -71,15 +71,10 @@ export default function ChatPage() {
   }
 
   const loadMessages = async (sessionId: string) => {
-    // Evitar recarregar se já é a sessão atual
-    if (currentSession === sessionId && messages.length > 0) {
-      setShowMobileSidebar(false)
-      return
-    }
-
+    // SEMPRE limpar e recarregar ao clicar em uma sessão
     setLoadingMessages(true)
-    setMessages([]) // Limpar mensagens antigas ANTES de carregar novas
     setCurrentSession(sessionId)
+    setMessages([]) // Limpar IMEDIATAMENTE
     setShowMobileSidebar(false)
     
     try {
@@ -92,16 +87,15 @@ export default function ChatPage() {
 
       if (error) {
         console.error('Error loading messages:', error)
+        setLoadingMessages(false)
         return
       }
 
-      // Usar setTimeout para garantir que o state foi limpo
-      setTimeout(() => {
-        setMessages(data || [])
-        setLoadingMessages(false)
-      }, 50)
+      // Setar as mensagens DESTA sessão específica
+      setMessages(data || [])
     } catch (e) { 
       console.error(e)
+    } finally {
       setLoadingMessages(false)
     }
   }
