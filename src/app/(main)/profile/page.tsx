@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { motion } from 'framer-motion'
 import {
   User, Settings, LogOut, ChevronRight, Heart, Bell,
-  Shield, HelpCircle, Star
+  Shield, HelpCircle, Star, Calendar, ShoppingCart, Baby, Briefcase, BookOpen
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { User as UserType } from '@/types'
@@ -51,13 +52,14 @@ export default function ProfilePage() {
   }
 
   const menuItems = [
-    { icon: User, label: 'Editar Perfil', href: '/profile/edit' },
-    { icon: Bell, label: 'Notificacoes', href: '/profile/notifications' },
-    { icon: Heart, label: 'Minha Saude', href: '/profile/health' },
-    { icon: Settings, label: 'Configuracoes', href: '/profile/settings' },
-    { icon: Shield, label: 'Privacidade', href: '/profile/privacy' },
-    { icon: HelpCircle, label: 'Ajuda', href: '/profile/help' },
-    { icon: Star, label: 'Avaliar App', href: '#' },
+    { icon: User, label: 'Dados Pessoais', href: '/profile/personal' },
+    { icon: Heart, label: 'Saúde e Medidas', href: '/profile/health' },
+    { icon: Bell, label: 'Notificações', href: '/profile/notifications' },
+    { icon: Calendar, label: 'Minhas Consultas', href: '/appointments' },
+    { icon: ShoppingCart, label: 'Lista de Compras', href: '/shopping' },
+    { icon: Baby, label: 'Nomes de Bebê', href: '/baby-names' },
+    { icon: Briefcase, label: 'Mala Maternidade', href: '/maternity-bag' },
+    { icon: BookOpen, label: 'Conteúdos', href: '/content' },
   ]
 
   const getPhaseLabel = () => {
@@ -122,14 +124,15 @@ export default function ProfilePage() {
       {/* Menu */}
       <div className="card p-0 overflow-hidden">
         {menuItems.map((item, index) => (
-          <button
+          <Link
             key={index}
+            href={item.href}
             className="w-full flex items-center gap-4 px-4 py-4 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0"
           >
             <item.icon className="w-5 h-5 text-text-secondary" />
             <span className="flex-1 text-left">{item.label}</span>
             <ChevronRight className="w-5 h-5 text-text-secondary" />
-          </button>
+          </Link>
         ))}
       </div>
 

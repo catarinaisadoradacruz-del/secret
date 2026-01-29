@@ -183,3 +183,92 @@ export async function chatWithAssistant(
   const result = await chat.sendMessage(message)
   return result.response.text()
 }
+
+export async function generateRecipe(
+  mealType: string,
+  userContext: {
+    phase: string
+    gestationWeek?: number
+    restrictions: string[]
+  },
+  availableIngredients?: string
+) {
+  const isPregnant = userContext.phase === 'GESTANTE' || userContext.phase === 'PREGNANT'
+
+  const mealTypeLabels: Record<string, string> = {
+    breakfast: 'cafe da manha',
+    lunch: 'almoco',
+    dinner: 'jantar',
+    snack: 'lanche'
+  }
+
+  const prompt = `
+Crie uma receita saudavel para ${mealTypeLabels[mealType] || mealType}.
+
+${isPregnant ? `
+ATENCAO: A usuaria e GESTANTE na ${userContext.gestationWeek || 20}a semana.
+A receita deve ser segura para gestantes:
+- Evitar peixes crus, carnes mal passadas
+- Evitar queijos nao pasteurizados
+- Priorizar nutrientes: acido folico, ferro, calcio
+` : ''}
+
+${userContext.restrictions.length > 0 ? `Restricoes alimentares: ${userContext.restrictions.join(', ')}` : ''}
+
+${availableIngredients ? `Ingredientes disponiveis: ${availableIngredients}` : ''}
+
+Retorne APENAS JSON valido (sem markdown):
+{
+  "name": "Nome da receita",
+  "description": "Descricao breve",
+  "difficulty": "easy|medium|hard",
+  "prep_time": 15,
+  "cook_time": 30,
+  "servings": 2,
+  "calories_per_serving": 350,
+  "protein_per_serving": 20,
+  "ingredients": [
+    {"item": "ingrediente", "quantity": "quantidade"}
+  ],
+  "instructions": [
+    "Passo 1",
+    "Passo 2"
+  ],
+  "tips": ["dica opcional"]
+}
+`
+
+  const result = await chatModel.generateContent(prompt)
+  const text = result.response.text()
+  const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim()
+  return JSON.parse(cleanJson)
+}
+
+export async function generateBabyNames(
+  gender: 'male' | 'female' | 'neutral',
+  style: string,
+  count: number = 10
+) {
+  const genderLabel = gender === 'male' ? 'masculino' : gender === 'female' ? 'feminino' : 'neutro'
+
+  const prompt = `
+Gere ${count} sugestoes de nomes de bebe com genero ${genderLabel}.
+Estilo preferido: ${style || 'classico e moderno'}
+
+Retorne APENAS JSON valido:
+{
+  "names": [
+    {
+      "name": "Nome",
+      "meaning": "Significado do nome",
+      "origin": "Origem (ex: hebraico, latim)"
+    }
+  ]
+}
+`
+
+  const result = await chatModel.generateContent(prompt)
+  const text = result.response.text()
+  const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim()
+  return JSON.parse(cleanJson)
+}
