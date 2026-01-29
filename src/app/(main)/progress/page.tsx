@@ -1,14 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { useState, useEffect, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Card, LoadingSpinner } from '@/components/ui'
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
 export default function ProgressPage() {
   const [period, setPeriod] = useState<'week' | 'month' | 'all'>('week')
-  const [isLoading, setIsLoading] = useState(true)
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
   const [progressData, setProgressData] = useState<any[]>([])
   const [stats, setStats] = useState({
     totalWorkouts: 0,
@@ -18,34 +18,23 @@ export default function ProgressPage() {
     latestWeight: 0
   })
 
-  useEffect(() => {
-    loadProgress()
-  }, [period])
-
-  async function loadProgress() {
-    setIsLoading(true)
-
+  const loadProgress = useCallback(async (selectedPeriod: string) => {
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
 
-      if (!user) {
-        setIsLoading(false)
-        return
-      }
+      if (!user) return
 
-      // Calcular data de início baseado no período
       const now = new Date()
       let startDate = new Date()
-      if (period === 'week') {
+      if (selectedPeriod === 'week') {
         startDate.setDate(now.getDate() - 7)
-      } else if (period === 'month') {
+      } else if (selectedPeriod === 'month') {
         startDate.setMonth(now.getMonth() - 1)
       } else {
         startDate.setFullYear(now.getFullYear() - 10)
       }
 
-      // Buscar progresso
       const { data: progress } = await supabase
         .from('progress')
         .select('*')
@@ -53,7 +42,6 @@ export default function ProgressPage() {
         .gte('date', startDate.toISOString().split('T')[0])
         .order('date', { ascending: true })
 
-      // Buscar treinos
       const { data: workouts } = await supabase
         .from('workouts')
         .select('*')
@@ -61,14 +49,12 @@ export default function ProgressPage() {
         .gte('created_at', startDate.toISOString())
         .eq('status', 'COMPLETED')
 
-      // Buscar refeições
       const { data: meals } = await supabase
         .from('meals')
         .select('total_calories, date')
         .eq('user_id', user.id)
         .gte('date', startDate.toISOString().split('T')[0])
 
-      // Calcular stats
       const totalWorkouts = workouts?.length || 0
       const avgCalories = meals && meals.length > 0
         ? Math.round(meals.reduce((sum, m) => sum + (m.total_calories || 0), 0) / meals.length)
@@ -92,10 +78,23 @@ export default function ProgressPage() {
       })
     } catch (error) {
       console.error('Erro ao carregar progresso:', error)
-    } finally {
-      setIsLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const init = async () => {
+      await loadProgress(period)
+      setIsInitialLoading(false)
+    }
+    init()
+  }, [])
+
+  // Quando muda período, atualiza sem mostrar loading
+  useEffect(() => {
+    if (!isInitialLoading) {
+      loadProgress(period)
+    }
+  }, [period, isInitialLoading, loadProgress])
 
   const periods = [
     { value: 'week', label: 'Semana' },
@@ -103,7 +102,7 @@ export default function ProgressPage() {
     { value: 'all', label: 'Total' }
   ]
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <LoadingSpinner size="lg" />
@@ -121,15 +120,15 @@ export default function ProgressPage() {
         </p>
       </div>
 
-      {/* Period Selector */}
+      {/* Period Selector - Mudança instantânea sem recarregar página */}
       <div className="flex gap-2 mb-6">
         {periods.map((p) => (
           <button
             key={p.value}
             onClick={() => setPeriod(p.value as typeof period)}
-            className={`flex-1 py-2 px-4 rounded-xl font-medium transition-all ${
+            className={`flex-1 py-2 px-4 rounded-xl font-medium transition-all duration-200 ${
               period === p.value
-                ? 'bg-primary text-white'
+                ? 'bg-primary text-white shadow-md'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
@@ -138,23 +137,25 @@ export default function ProgressPage() {
         ))}
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+      {/* Stats Grid com animação suave */}
+      <AnimatePresence mode="wait">
+        <motion.div 
+          key={period}
+          initial={{ opacity: 0.5 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="grid grid-cols-2 gap-4 mb-6"
+        >
           <Card className="text-center">
             <div className="text-3xl font-bold text-primary-600">{stats.totalWorkouts}</div>
             <div className="text-sm text-gray-600">Treinos</div>
           </Card>
-        </motion.div>
 
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
           <Card className="text-center">
             <div className="text-3xl font-bold text-secondary-600">{stats.avgCalories || '—'}</div>
             <div className="text-sm text-gray-600">Cal/dia média</div>
           </Card>
-        </motion.div>
 
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
           <Card className="text-center">
             <div className={`text-3xl font-bold flex items-center justify-center gap-1 ${
               stats.weightChange < 0 ? 'text-green-500' : stats.weightChange > 0 ? 'text-orange-500' : 'text-gray-500'
@@ -167,15 +168,13 @@ export default function ProgressPage() {
             </div>
             <div className="text-sm text-gray-600">Variação peso</div>
           </Card>
-        </motion.div>
 
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
           <Card className="text-center">
             <div className="text-3xl font-bold text-accent-500">{stats.streak}</div>
             <div className="text-sm text-gray-600">Dias seguidos</div>
           </Card>
         </motion.div>
-      </div>
+      </AnimatePresence>
 
       {/* Latest Weight */}
       {stats.latestWeight > 0 && (
@@ -188,31 +187,40 @@ export default function ProgressPage() {
       )}
 
       {/* Weight Chart */}
-      {progressData.length > 0 ? (
-        <Card className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Evolução do Peso</h2>
-          <div className="space-y-2">
-            {progressData.map((entry, index) => (
-              <div key={index} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                <span className="text-sm text-gray-600">
-                  {new Date(entry.date).toLocaleDateString('pt-BR')}
-                </span>
-                <span className="font-semibold text-gray-900">{entry.weight} kg</span>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={period + '-chart'}
+          initial={{ opacity: 0.5 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+        >
+          {progressData.length > 0 ? (
+            <Card className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Evolução do Peso</h2>
+              <div className="space-y-2">
+                {progressData.map((entry, index) => (
+                  <div key={index} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                    <span className="text-sm text-gray-600">
+                      {new Date(entry.date).toLocaleDateString('pt-BR')}
+                    </span>
+                    <span className="font-semibold text-gray-900">{entry.weight} kg</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </Card>
-      ) : (
-        <Card className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Evolução do Peso</h2>
-          <div className="h-48 bg-gradient-to-br from-primary-50 to-secondary-50 rounded-xl flex items-center justify-center">
-            <div className="text-center">
-              <p className="text-gray-400 mb-2">Nenhum registro ainda</p>
-              <p className="text-sm text-gray-500">Registre seu peso para ver a evolução</p>
-            </div>
-          </div>
-        </Card>
-      )}
+            </Card>
+          ) : (
+            <Card className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Evolução do Peso</h2>
+              <div className="h-48 bg-gradient-to-br from-primary-50 to-secondary-50 rounded-xl flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-gray-400 mb-2">Nenhum registro ainda</p>
+                  <p className="text-sm text-gray-500">Registre seu peso para ver a evolução</p>
+                </div>
+              </div>
+            </Card>
+          )}
+        </motion.div>
+      </AnimatePresence>
 
       {/* Empty State */}
       {progressData.length === 0 && stats.totalWorkouts === 0 && (
