@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Apple, Droplets, Flame, Target, Plus, Utensils, ChefHat, Loader2, Save, Sparkles, Heart, X, Clock, Users, Check, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Apple, Droplets, Flame, Target, Plus, Utensils, ChefHat, Loader2, Save, Sparkles, Heart, X, Clock, Users, Check, RefreshCw, Edit3, Trash2, Coffee, Sun, Moon, Cookie } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
@@ -15,6 +15,7 @@ interface Meal {
   fat: number
   time?: string
   type: string
+  user_id?: string
 }
 
 interface DayPlan {
@@ -43,6 +44,7 @@ interface Recipe {
   ingredients: string[]
   instructions: string[]
   is_favorite?: boolean
+  user_id?: string
 }
 
 export default function NutritionPage() {
@@ -60,6 +62,11 @@ export default function NutritionPage() {
   const [userProfile, setUserProfile] = useState<any>(null)
   const [showPlanOptions, setShowPlanOptions] = useState(false)
   const [planDays, setPlanDays] = useState(7)
+  const [showAddMeal, setShowAddMeal] = useState(false)
+  const [newMealType, setNewMealType] = useState('breakfast')
+  const [editingPlan, setEditingPlan] = useState(false)
+  const [planFeedback, setPlanFeedback] = useState('')
+  const [savingRecipe, setSavingRecipe] = useState(false)
 
   useEffect(() => { loadData() }, [])
 
@@ -87,22 +94,28 @@ export default function NutritionPage() {
       setUserProfile(userRes.data)
       setRecipes(recipesRes.data || [])
 
+      // Calcular stats do dia
+      const dailyCalories = userRes.data?.phase === 'PREGNANT' ? 2200 : userRes.data?.phase === 'POSTPARTUM' ? 2500 : 1800
+
       setStats({
         calories: meals.reduce((sum: number, m: any) => sum + (m.calories || 0), 0),
         protein: meals.reduce((sum: number, m: any) => sum + (m.protein || 0), 0),
         carbs: meals.reduce((sum: number, m: any) => sum + (m.carbs || 0), 0),
         fat: meals.reduce((sum: number, m: any) => sum + (m.fat || 0), 0),
         water,
-        waterGoal: userRes.data?.daily_water_goal || 2000,
-        caloriesGoal: userRes.data?.daily_calories_goal || 2000
+        waterGoal: 2000,
+        caloriesGoal: dailyCalories
       })
 
       if (planRes.data?.plan_data) {
         setPlan(planRes.data.plan_data)
         setPlanSaved(true)
       }
-    } catch (e) { console.error(e) }
-    finally { setLoading(false) }
+    } catch (e) {
+      console.error('Load error:', e)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const addWater = async (amount: number) => {
@@ -110,93 +123,65 @@ export default function NutritionPage() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+
       await supabase.from('water_intake').insert({ user_id: user.id, amount })
       setStats(prev => ({ ...prev, water: prev.water + amount }))
+    } catch (e) { console.error(e) }
+  }
+
+  const addMeal = async (meal: Meal) => {
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data } = await supabase.from('meals').insert({
+        user_id: user.id,
+        ...meal
+      }).select().single()
+
+      if (data) {
+        setTodayMeals(prev => [...prev, data])
+        setStats(prev => ({
+          ...prev,
+          calories: prev.calories + meal.calories,
+          protein: prev.protein + meal.protein,
+          carbs: prev.carbs + meal.carbs,
+          fat: prev.fat + meal.fat
+        }))
+      }
+      setShowAddMeal(false)
     } catch (e) { console.error(e) }
   }
 
   const generatePlan = async () => {
     setGenerating(true)
     setShowPlanOptions(false)
-    setPlanSaved(false)
     
     try {
       const response = await fetch('/api/nutrition-plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           days: planDays,
           profile: userProfile,
-          restrictions: userProfile?.dietary_restrictions || [],
-          phase: userProfile?.phase || 'TRYING'
+          feedback: planFeedback
         })
       })
-      
+
       const data = await response.json()
+      
       if (data.plan) {
         setPlan(data.plan)
+        setPlanSaved(false)
+        setEditingPlan(false)
+        setPlanFeedback('')
       }
-    } catch (e) { 
-      console.error(e)
-      // Gerar plano local como fallback
-      const localPlan = generateLocalPlan(planDays)
-      setPlan(localPlan)
+    } catch (e) {
+      console.error('Generate plan error:', e)
+    } finally {
+      setGenerating(false)
     }
-    finally { setGenerating(false) }
-  }
-
-  const generateLocalPlan = (days: number): DayPlan[] => {
-    const meals = {
-      breakfast: [
-        { name: 'Vitamina de Frutas com Aveia', description: 'Banana, mamão, aveia e leite', calories: 320, protein: 12, carbs: 48, fat: 8 },
-        { name: 'Ovos Mexidos com Torrada', description: '2 ovos, 2 torradas integrais, tomate', calories: 350, protein: 18, carbs: 30, fat: 16 },
-        { name: 'Iogurte com Granola', description: 'Iogurte natural, granola, mel, frutas', calories: 280, protein: 14, carbs: 42, fat: 6 },
-        { name: 'Tapioca com Queijo', description: 'Tapioca, queijo branco, tomate', calories: 290, protein: 15, carbs: 38, fat: 9 },
-        { name: 'Mingau de Aveia', description: 'Aveia, leite, canela, banana', calories: 310, protein: 11, carbs: 52, fat: 7 },
-      ],
-      morning_snack: [
-        { name: 'Frutas Variadas', description: 'Maçã, banana ou pera', calories: 120, protein: 1, carbs: 28, fat: 0 },
-        { name: 'Mix de Castanhas', description: 'Castanhas, nozes, amêndoas', calories: 180, protein: 5, carbs: 8, fat: 16 },
-        { name: 'Iogurte Natural', description: 'Iogurte com mel', calories: 140, protein: 8, carbs: 18, fat: 4 },
-      ],
-      lunch: [
-        { name: 'Frango Grelhado com Legumes', description: 'Peito de frango, arroz integral, brócolis', calories: 450, protein: 35, carbs: 42, fat: 12 },
-        { name: 'Peixe Assado com Batata', description: 'Filé de tilápia, batata doce, salada', calories: 420, protein: 32, carbs: 38, fat: 14 },
-        { name: 'Carne com Legumes', description: 'Patinho, arroz, feijão, salada', calories: 480, protein: 38, carbs: 45, fat: 15 },
-      ],
-      afternoon_snack: [
-        { name: 'Sanduíche Natural', description: 'Pão integral, frango desfiado, alface', calories: 220, protein: 15, carbs: 25, fat: 6 },
-        { name: 'Smoothie Verde', description: 'Couve, maçã, gengibre, água de coco', calories: 150, protein: 3, carbs: 32, fat: 1 },
-        { name: 'Torrada com Pasta de Amendoim', description: 'Torrada integral, pasta de amendoim', calories: 190, protein: 8, carbs: 20, fat: 10 },
-      ],
-      dinner: [
-        { name: 'Sopa de Legumes', description: 'Legumes variados, frango desfiado', calories: 280, protein: 22, carbs: 28, fat: 8 },
-        { name: 'Omelete com Salada', description: '3 ovos, queijo, espinafre, salada', calories: 320, protein: 24, carbs: 12, fat: 20 },
-        { name: 'Wrap de Frango', description: 'Wrap integral, frango, vegetais', calories: 350, protein: 28, carbs: 32, fat: 12 },
-      ]
-    }
-
-    const tips = [
-      'Beba pelo menos 2L de água por dia',
-      'Prefira alimentos integrais',
-      'Evite açúcar refinado',
-      'Mastigue bem os alimentos',
-      'Faça pequenas refeições a cada 3 horas',
-      'Inclua proteínas em todas as refeições',
-      'Consuma frutas e vegetais variados'
-    ]
-
-    return Array.from({ length: days }, (_, i) => ({
-      day: i + 1,
-      meals: {
-        breakfast: { ...meals.breakfast[i % meals.breakfast.length], type: 'breakfast' },
-        morning_snack: { ...meals.morning_snack[i % meals.morning_snack.length], type: 'morning_snack' },
-        lunch: { ...meals.lunch[i % meals.lunch.length], type: 'lunch' },
-        afternoon_snack: { ...meals.afternoon_snack[i % meals.afternoon_snack.length], type: 'afternoon_snack' },
-        dinner: { ...meals.dinner[i % meals.dinner.length], type: 'dinner' }
-      },
-      tips: [tips[i % tips.length], tips[(i + 1) % tips.length]]
-    }))
   }
 
   const savePlan = async () => {
@@ -214,111 +199,87 @@ export default function NutritionPage() {
       await supabase.from('nutrition_plans').insert({
         user_id: user.id,
         plan_data: plan,
-        duration_days: plan.length,
-        is_active: true,
-        start_date: new Date().toISOString()
+        days: planDays,
+        is_active: true
       })
 
       setPlanSaved(true)
-      alert('Plano salvo com sucesso!')
-    } catch (e) { 
-      console.error(e)
-      alert('Erro ao salvar plano')
-    }
+    } catch (e) { console.error(e) }
+  }
+
+  const discardPlan = () => {
+    setPlan(null)
+    setPlanSaved(false)
+  }
+
+  const adjustPlanWithAI = () => {
+    setEditingPlan(true)
   }
 
   const generateRecipes = async (category: string) => {
     setGenerating(true)
+    
     try {
       const response = await fetch('/api/recipes/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           category,
-          count: 5,
           profile: userProfile,
-          restrictions: userProfile?.dietary_restrictions || []
+          count: 5
         })
       })
-      
+
       const data = await response.json()
-      if (data.recipes) {
-        // Salvar receitas automaticamente
+      
+      if (data.recipes && data.recipes.length > 0) {
+        // Salvar receitas automaticamente no banco
         const supabase = createClient()
         const { data: { user } } = await supabase.auth.getUser()
+        
         if (user) {
           const recipesToSave = data.recipes.map((r: Recipe) => ({
             ...r,
-            user_id: user.id,
-            is_favorite: false
+            user_id: user.id
           }))
-          
-          const { data: saved } = await supabase.from('recipes').insert(recipesToSave).select()
-          if (saved) {
-            setRecipes(prev => [...saved, ...prev])
+
+          const { data: savedRecipes } = await supabase
+            .from('recipes')
+            .insert(recipesToSave)
+            .select()
+
+          if (savedRecipes) {
+            setRecipes(prev => [...savedRecipes, ...prev])
           }
         }
       }
-    } catch (e) { 
-      console.error(e)
-      // Gerar receitas locais como fallback
-      const localRecipes = generateLocalRecipes(category)
-      await saveLocalRecipes(localRecipes)
+    } catch (e) {
+      console.error('Generate recipes error:', e)
+    } finally {
+      setGenerating(false)
     }
-    finally { setGenerating(false) }
   }
 
-  const generateLocalRecipes = (category: string): Recipe[] => {
-    const allRecipes: Record<string, Recipe[]> = {
-      'Café da Manhã': [
-        { name: 'Panqueca de Banana', description: 'Panqueca saudável sem açúcar', category: 'Café da Manhã', prep_time: 15, servings: 2, calories: 280, protein: 12, carbs: 38, fat: 8, ingredients: ['2 bananas maduras', '2 ovos', '1/2 xícara de aveia', '1 colher de canela', 'Óleo de coco para untar'], instructions: ['Amasse as bananas', 'Misture com ovos e aveia', 'Adicione canela', 'Despeje na frigideira quente', 'Doure dos dois lados'] },
-        { name: 'Bowl de Açaí', description: 'Açaí com frutas e granola', category: 'Café da Manhã', prep_time: 10, servings: 1, calories: 350, protein: 8, carbs: 52, fat: 12, ingredients: ['200g de polpa de açaí', '1 banana', 'Granola', 'Mel', 'Frutas variadas'], instructions: ['Bata o açaí com banana', 'Despeje na tigela', 'Adicione granola por cima', 'Decore com frutas', 'Regue com mel'] },
-        { name: 'Crepioca de Queijo', description: 'Crepioca leve e proteica', category: 'Café da Manhã', prep_time: 10, servings: 1, calories: 240, protein: 18, carbs: 22, fat: 8, ingredients: ['2 colheres de goma de tapioca', '1 ovo', '30g de queijo branco', 'Orégano'], instructions: ['Misture a goma com o ovo', 'Despeje na frigideira antiaderente', 'Adicione o queijo', 'Dobre ao meio', 'Polvilhe orégano'] }
-      ],
-      'Almoço': [
-        { name: 'Frango ao Curry', description: 'Frango cremoso com especiarias', category: 'Almoço', prep_time: 30, servings: 4, calories: 380, protein: 35, carbs: 18, fat: 18, ingredients: ['500g peito de frango', '1 lata leite de coco', '2 colheres curry', 'Cebola', 'Alho'], instructions: ['Corte o frango em cubos', 'Refogue cebola e alho', 'Adicione o frango', 'Junte curry e leite de coco', 'Cozinhe por 20 minutos'] },
-        { name: 'Salmão com Legumes', description: 'Salmão assado nutritivo', category: 'Almoço', prep_time: 35, servings: 2, calories: 420, protein: 38, carbs: 22, fat: 20, ingredients: ['2 filés de salmão', 'Brócolis', 'Cenoura', 'Azeite', 'Limão'], instructions: ['Tempere o salmão', 'Corte os legumes', 'Disponha em assadeira', 'Regue com azeite', 'Asse por 25 minutos'] },
-        { name: 'Risoto de Cogumelos', description: 'Risoto cremoso vegetariano', category: 'Almoço', prep_time: 40, servings: 4, calories: 350, protein: 12, carbs: 52, fat: 10, ingredients: ['1 xícara arroz arbóreo', '200g cogumelos', 'Caldo de legumes', 'Parmesão', 'Vinho branco'], instructions: ['Refogue cogumelos', 'Adicione arroz', 'Vá adicionando caldo aos poucos', 'Mexa sempre', 'Finalize com parmesão'] }
-      ],
-      'Jantar': [
-        { name: 'Sopa de Abóbora', description: 'Sopa cremosa reconfortante', category: 'Jantar', prep_time: 25, servings: 4, calories: 180, protein: 5, carbs: 28, fat: 6, ingredients: ['500g abóbora', 'Cebola', 'Gengibre', 'Caldo de legumes', 'Creme de leite light'], instructions: ['Cozinhe a abóbora', 'Refogue cebola e gengibre', 'Bata tudo no liquidificador', 'Adicione creme de leite', 'Sirva quente'] },
-        { name: 'Wrap de Atum', description: 'Wrap leve e prático', category: 'Jantar', prep_time: 15, servings: 2, calories: 290, protein: 24, carbs: 28, fat: 10, ingredients: ['2 wraps integrais', '1 lata de atum', 'Alface', 'Tomate', 'Maionese light'], instructions: ['Escorra o atum', 'Misture com maionese', 'Monte o wrap', 'Adicione vegetais', 'Enrole e sirva'] }
-      ],
-      'Lanches': [
-        { name: 'Bolinho de Banana', description: 'Bolinho fit sem açúcar', category: 'Lanches', prep_time: 30, servings: 12, calories: 85, protein: 3, carbs: 14, fat: 2, ingredients: ['3 bananas', '2 xícaras aveia', '1/4 xícara mel', 'Canela', 'Passas'], instructions: ['Amasse as bananas', 'Misture todos ingredientes', 'Forme bolinhos', 'Disponha em forma', 'Asse por 20 minutos'] },
-        { name: 'Hummus com Palitos', description: 'Hummus caseiro com vegetais', category: 'Lanches', prep_time: 15, servings: 4, calories: 150, protein: 7, carbs: 18, fat: 6, ingredients: ['1 lata grão-de-bico', 'Tahine', 'Limão', 'Alho', 'Azeite'], instructions: ['Escorra o grão-de-bico', 'Bata com tahine', 'Adicione limão e alho', 'Regue com azeite', 'Sirva com palitos de cenoura'] }
-      ],
-      'Para Gestantes': [
-        { name: 'Smoothie de Espinafre', description: 'Rico em ácido fólico', category: 'Para Gestantes', prep_time: 5, servings: 1, calories: 180, protein: 6, carbs: 32, fat: 3, ingredients: ['1 xícara espinafre', '1 banana', '1/2 xícara morangos', 'Água de coco', 'Semente de chia'], instructions: ['Coloque tudo no liquidificador', 'Bata até ficar homogêneo', 'Adicione chia', 'Sirva gelado'] },
-        { name: 'Omelete de Espinafre', description: 'Café da manhã nutritivo', category: 'Para Gestantes', prep_time: 10, servings: 1, calories: 250, protein: 18, carbs: 4, fat: 18, ingredients: ['3 ovos', '1 xícara espinafre', 'Queijo branco', 'Azeite', 'Sal'], instructions: ['Bata os ovos', 'Refogue o espinafre', 'Adicione os ovos', 'Coloque o queijo', 'Dobre e sirva'] }
-      ]
-    }
-
-    return allRecipes[category] || allRecipes['Almoço']
-  }
-
-  const saveLocalRecipes = async (recipesToSave: Recipe[]) => {
+  const saveRecipe = async (recipe: Recipe) => {
+    setSavingRecipe(true)
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const recipesWithUser = recipesToSave.map(r => ({
-        ...r,
-        user_id: user.id,
-        is_favorite: false
-      }))
+      const { data } = await supabase.from('recipes').insert({
+        ...recipe,
+        user_id: user.id
+      }).select().single()
 
-      const { data: saved } = await supabase.from('recipes').insert(recipesWithUser).select()
-      if (saved) {
-        setRecipes(prev => [...saved, ...prev])
+      if (data) {
+        setRecipes(prev => [data, ...prev])
       }
     } catch (e) { console.error(e) }
+    finally { setSavingRecipe(false) }
   }
 
   const toggleFavorite = async (recipe: Recipe) => {
-    if (!recipe.id) return
-    
     try {
       const supabase = createClient()
       await supabase.from('recipes').update({ is_favorite: !recipe.is_favorite }).eq('id', recipe.id)
@@ -329,19 +290,50 @@ export default function NutritionPage() {
     } catch (e) { console.error(e) }
   }
 
-  const categories = ['Café da Manhã', 'Almoço', 'Jantar', 'Lanches', 'Para Gestantes']
-  
+  const deleteRecipe = async (recipeId: string) => {
+    if (!confirm('Excluir esta receita?')) return
+    try {
+      const supabase = createClient()
+      await supabase.from('recipes').delete().eq('id', recipeId)
+      setRecipes(prev => prev.filter(r => r.id !== recipeId))
+      setSelectedRecipe(null)
+    } catch (e) { console.error(e) }
+  }
+
+  const getMealIcon = (type: string) => {
+    switch(type) {
+      case 'breakfast': return <Coffee className="w-5 h-5 text-orange-500" />
+      case 'morning_snack': return <Cookie className="w-5 h-5 text-yellow-500" />
+      case 'lunch': return <Sun className="w-5 h-5 text-amber-500" />
+      case 'afternoon_snack': return <Apple className="w-5 h-5 text-green-500" />
+      case 'dinner': return <Moon className="w-5 h-5 text-indigo-500" />
+      default: return <Utensils className="w-5 h-5 text-gray-500" />
+    }
+  }
+
+  const getMealTypeName = (type: string) => {
+    const names: Record<string, string> = {
+      breakfast: 'Café da Manhã',
+      morning_snack: 'Lanche da Manhã',
+      lunch: 'Almoço',
+      afternoon_snack: 'Lanche da Tarde',
+      dinner: 'Jantar'
+    }
+    return names[type] || type
+  }
+
+  const recipeCategories = [
+    { id: 'all', name: 'Todas', icon: '🍽️', count: recipes.length },
+    { id: 'Café da Manhã', name: 'Café da Manhã', icon: '☕', count: recipes.filter(r => r.category === 'Café da Manhã').length },
+    { id: 'Almoço', name: 'Almoço', icon: '🍲', count: recipes.filter(r => r.category === 'Almoço').length },
+    { id: 'Jantar', name: 'Jantar', icon: '🌙', count: recipes.filter(r => r.category === 'Jantar').length },
+    { id: 'Lanches', name: 'Lanches', icon: '🥪', count: recipes.filter(r => r.category === 'Lanches').length },
+    { id: 'Para Gestantes', name: 'Para Gestantes', icon: '🤰', count: recipes.filter(r => r.category === 'Para Gestantes').length }
+  ]
+
   const filteredRecipes = recipeCategory === 'all' 
     ? recipes 
     : recipes.filter(r => r.category === recipeCategory)
-
-  const mealTypes = [
-    { key: 'breakfast', label: 'Café da Manhã', icon: '🌅' },
-    { key: 'morning_snack', label: 'Lanche da Manhã', icon: '🍎' },
-    { key: 'lunch', label: 'Almoço', icon: '🍽️' },
-    { key: 'afternoon_snack', label: 'Lanche da Tarde', icon: '🥤' },
-    { key: 'dinner', label: 'Jantar', icon: '🌙' }
-  ]
 
   if (loading) {
     return (
@@ -354,331 +346,419 @@ export default function NutritionPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       {/* Header */}
-      <header className="bg-white border-b px-4 py-4">
-        <div className="flex items-center gap-3">
-          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div>
-            <h1 className="text-xl font-bold">Nutrição</h1>
-            <p className="text-sm text-gray-500">Seu plano alimentar</p>
-          </div>
+      <header className="bg-white border-b px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
+        <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
+          <ArrowLeft className="w-5 h-5" />
+        </Link>
+        <div>
+          <h1 className="font-bold text-lg">Nutrição</h1>
+          <p className="text-xs text-gray-500">Seu plano alimentar</p>
         </div>
       </header>
 
       {/* Tabs */}
       <div className="bg-white border-b px-4 py-2">
-        <div className="flex gap-2">
-          {[
-            { id: 'hoje', label: 'Hoje' },
-            { id: 'plano', label: 'Plano' },
-            { id: 'receitas', label: 'Receitas' }
-          ].map(t => (
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+          {(['hoje', 'plano', 'receitas'] as const).map(t => (
             <button
-              key={t.id}
-              onClick={() => setTab(t.id as any)}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                tab === t.id ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all ${
+                tab === t ? 'bg-white shadow text-primary-600' : 'text-gray-600'
               }`}
             >
-              {t.label}
+              {t === 'hoje' ? 'Hoje' : t === 'plano' ? 'Plano' : 'Receitas'}
             </button>
           ))}
         </div>
       </div>
 
       <div className="p-4">
-        {/* TAB HOJE */}
+        {/* ABA HOJE */}
         {tab === 'hoje' && (
           <div className="space-y-4">
-            {/* Stats Cards */}
+            {/* Stats do Dia */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white rounded-xl p-4 border">
+              <div className="bg-white p-4 rounded-xl shadow-sm">
                 <div className="flex items-center gap-2 mb-2">
                   <Flame className="w-5 h-5 text-orange-500" />
-                  <span className="text-sm text-gray-500">Calorias</span>
+                  <span className="text-sm text-gray-600">Calorias</span>
                 </div>
-                <p className="text-2xl font-bold">{stats.calories}</p>
-                <p className="text-xs text-gray-400">Meta: {stats.caloriesGoal} kcal</p>
+                <div className="flex items-end gap-1">
+                  <span className="text-2xl font-bold">{stats.calories}</span>
+                  <span className="text-gray-400 text-sm mb-1">/ {stats.caloriesGoal}</span>
+                </div>
                 <div className="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-orange-500 rounded-full transition-all"
+                    className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full transition-all"
                     style={{ width: `${Math.min((stats.calories / stats.caloriesGoal) * 100, 100)}%` }}
                   />
                 </div>
               </div>
-              
-              <div className="bg-white rounded-xl p-4 border">
+
+              <div className="bg-white p-4 rounded-xl shadow-sm">
                 <div className="flex items-center gap-2 mb-2">
                   <Droplets className="w-5 h-5 text-blue-500" />
-                  <span className="text-sm text-gray-500">Água</span>
+                  <span className="text-sm text-gray-600">Água</span>
                 </div>
-                <p className="text-2xl font-bold">{stats.water}ml</p>
-                <p className="text-xs text-gray-400">Meta: {stats.waterGoal}ml</p>
-                <div className="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-blue-500 rounded-full transition-all"
-                    style={{ width: `${Math.min((stats.water / stats.waterGoal) * 100, 100)}%` }}
-                  />
+                <div className="flex items-end gap-1">
+                  <span className="text-2xl font-bold">{stats.water}</span>
+                  <span className="text-gray-400 text-sm mb-1">/ {stats.waterGoal}ml</span>
                 </div>
-              </div>
-            </div>
-
-            {/* Water Buttons */}
-            <div className="bg-white rounded-xl p-4 border">
-              <h3 className="font-medium mb-3">Adicionar Água</h3>
-              <div className="flex gap-2">
-                {[150, 200, 250, 300].map(amount => (
-                  <button
-                    key={amount}
-                    onClick={() => addWater(amount)}
-                    className="flex-1 py-2 px-3 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors"
-                  >
-                    +{amount}ml
-                  </button>
-                ))}
+                <div className="mt-2 flex gap-1">
+                  {[200, 300, 500].map(ml => (
+                    <button
+                      key={ml}
+                      onClick={() => addWater(ml)}
+                      className="flex-1 py-1 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
+                    >
+                      +{ml}ml
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             {/* Macros */}
-            <div className="bg-white rounded-xl p-4 border">
-              <h3 className="font-medium mb-3">Macronutrientes</h3>
+            <div className="bg-white p-4 rounded-xl shadow-sm">
+              <h3 className="font-semibold mb-3">Macronutrientes</h3>
               <div className="grid grid-cols-3 gap-4">
                 <div className="text-center">
-                  <div className="w-12 h-12 mx-auto rounded-full bg-red-100 flex items-center justify-center mb-2">
-                    <span className="text-lg">🥩</span>
-                  </div>
-                  <p className="text-lg font-bold">{stats.protein}g</p>
-                  <p className="text-xs text-gray-500">Proteína</p>
+                  <div className="text-2xl font-bold text-green-600">{stats.protein}g</div>
+                  <div className="text-xs text-gray-500">Proteínas</div>
                 </div>
                 <div className="text-center">
-                  <div className="w-12 h-12 mx-auto rounded-full bg-yellow-100 flex items-center justify-center mb-2">
-                    <span className="text-lg">🍞</span>
-                  </div>
-                  <p className="text-lg font-bold">{stats.carbs}g</p>
-                  <p className="text-xs text-gray-500">Carboidratos</p>
+                  <div className="text-2xl font-bold text-amber-600">{stats.carbs}g</div>
+                  <div className="text-xs text-gray-500">Carboidratos</div>
                 </div>
                 <div className="text-center">
-                  <div className="w-12 h-12 mx-auto rounded-full bg-green-100 flex items-center justify-center mb-2">
-                    <span className="text-lg">🥑</span>
-                  </div>
-                  <p className="text-lg font-bold">{stats.fat}g</p>
-                  <p className="text-xs text-gray-500">Gorduras</p>
+                  <div className="text-2xl font-bold text-purple-600">{stats.fat}g</div>
+                  <div className="text-xs text-gray-500">Gorduras</div>
                 </div>
               </div>
             </div>
 
-            {/* Today Meals */}
-            <div className="bg-white rounded-xl p-4 border">
+            {/* Refeições de Hoje */}
+            <div className="bg-white p-4 rounded-xl shadow-sm">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-medium">Refeições de Hoje</h3>
-                <Link href="/scanner" className="text-primary-600 text-sm font-medium">+ Adicionar</Link>
+                <h3 className="font-semibold">Refeições de Hoje</h3>
+                <button
+                  onClick={() => setShowAddMeal(true)}
+                  className="p-2 bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
               </div>
-              
+
               {todayMeals.length === 0 ? (
-                <div className="text-center py-6 text-gray-400">
-                  <Utensils className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">Nenhuma refeição registrada</p>
-                  <Link href="/scanner" className="text-primary-600 text-sm font-medium mt-2 inline-block">Registrar primeira refeição</Link>
+                <div className="text-center py-8 text-gray-400">
+                  <Utensils className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p>Nenhuma refeição registrada hoje</p>
+                  <button
+                    onClick={() => setShowAddMeal(true)}
+                    className="mt-3 px-4 py-2 bg-primary-500 text-white rounded-xl text-sm"
+                  >
+                    Adicionar Refeição
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {todayMeals.map((meal, i) => (
-                    <div key={meal.id || i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                      <div className="w-10 h-10 rounded-lg bg-primary-100 flex items-center justify-center">
-                        <Utensils className="w-5 h-5 text-primary-600" />
+                  {todayMeals.map((meal, idx) => (
+                    <div key={idx} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                      {getMealIcon(meal.type)}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{meal.name}</p>
+                        <p className="text-xs text-gray-500">{getMealTypeName(meal.type)}</p>
                       </div>
-                      <div className="flex-1">
-                        <p className="font-medium">{meal.name}</p>
-                        <p className="text-xs text-gray-500">{meal.calories} kcal • {meal.protein}g prot</p>
+                      <div className="text-right">
+                        <p className="font-semibold text-orange-600">{meal.calories} kcal</p>
+                        <p className="text-xs text-gray-500">P:{meal.protein}g C:{meal.carbs}g G:{meal.fat}g</p>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
+
+            {/* Sugestão do Dia baseada no perfil */}
+            {userProfile && (
+              <div className="bg-gradient-to-br from-primary-50 to-primary-100 p-4 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-5 h-5 text-primary-600" />
+                  <h3 className="font-semibold text-primary-800">Dica do Dia</h3>
+                </div>
+                <p className="text-sm text-primary-700">
+                  {userProfile.phase === 'PREGNANT' 
+                    ? '🤰 Na gestação, priorize alimentos ricos em ácido fólico, ferro e cálcio. Evite alimentos crus e cafeína em excesso.'
+                    : userProfile.phase === 'POSTPARTUM'
+                    ? '👶 No pós-parto, mantenha uma alimentação rica em proteínas e ferro para recuperação. Se amamentando, aumente a ingestão de líquidos.'
+                    : '💪 Mantenha uma alimentação equilibrada com proteínas, carboidratos complexos e gorduras boas.'}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
-        {/* TAB PLANO */}
+        {/* ABA PLANO */}
         {tab === 'plano' && (
           <div className="space-y-4">
             {!plan ? (
-              <div className="bg-white rounded-xl p-6 border text-center">
-                <ChefHat className="w-12 h-12 mx-auto mb-4 text-primary-500" />
-                <h3 className="text-lg font-semibold mb-2">Crie seu Plano Alimentar</h3>
-                <p className="text-gray-500 mb-4">Um plano personalizado com base no seu perfil e objetivos</p>
-                
+              /* Gerar Novo Plano */
+              <div className="bg-white p-6 rounded-xl shadow-sm text-center">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+                  <ChefHat className="w-8 h-8 text-white" />
+                </div>
+                <h2 className="text-xl font-bold mb-2">Plano Alimentar Personalizado</h2>
+                <p className="text-gray-500 mb-6">
+                  Gere um plano alimentar baseado no seu perfil, fase e objetivos
+                </p>
+
                 {showPlanOptions ? (
-                  <div className="space-y-3">
-                    <p className="text-sm text-gray-600">Quantos dias de plano?</p>
-                    <div className="flex gap-2 justify-center">
-                      {[7, 14, 30].map(d => (
-                        <button
-                          key={d}
-                          onClick={() => setPlanDays(d)}
-                          className={`px-4 py-2 rounded-lg font-medium ${planDays === d ? 'bg-primary-500 text-white' : 'bg-gray-100'}`}
-                        >
-                          {d} dias
-                        </button>
-                      ))}
+                  <div className="space-y-4 text-left">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Duração do Plano</label>
+                      <div className="flex gap-2">
+                        {[7, 14, 30].map(d => (
+                          <button
+                            key={d}
+                            onClick={() => setPlanDays(d)}
+                            className={`flex-1 py-2 rounded-lg border transition-all ${
+                              planDays === d 
+                                ? 'border-primary-500 bg-primary-50 text-primary-600' 
+                                : 'border-gray-200 hover:border-gray-300'
+                            }`}
+                          >
+                            {d} dias
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <button
-                      onClick={generatePlan}
-                      disabled={generating}
-                      className="w-full mt-4 py-3 bg-primary-500 text-white rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {generating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                      {generating ? 'Gerando...' : 'Gerar Plano'}
-                    </button>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Preferências (opcional)</label>
+                      <textarea
+                        value={planFeedback}
+                        onChange={(e) => setPlanFeedback(e.target.value)}
+                        placeholder="Ex: Prefiro refeições rápidas, sou vegetariana, tenho alergia a glúten..."
+                        className="w-full p-3 border rounded-xl text-sm resize-none focus:ring-2 focus:ring-primary-500 outline-none"
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowPlanOptions(false)}
+                        className="flex-1 py-3 border border-gray-200 rounded-xl"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={generatePlan}
+                        disabled={generating}
+                        className="flex-1 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl flex items-center justify-center gap-2"
+                      >
+                        {generating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                        Gerar Plano
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <button
                     onClick={() => setShowPlanOptions(true)}
-                    className="px-6 py-3 bg-primary-500 text-white rounded-xl font-medium flex items-center justify-center gap-2 mx-auto"
+                    className="px-6 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl font-medium flex items-center justify-center gap-2 mx-auto"
                   >
-                    <Sparkles className="w-5 h-5" /> Criar Plano com IA
+                    <Sparkles className="w-5 h-5" /> Criar Meu Plano
                   </button>
                 )}
               </div>
             ) : (
+              /* Exibir Plano */
               <>
-                {/* Plan Actions */}
-                <div className="flex gap-2">
-                  {!planSaved && (
-                    <button
-                      onClick={savePlan}
-                      className="flex-1 py-2 px-4 bg-green-500 text-white rounded-xl font-medium flex items-center justify-center gap-2"
-                    >
-                      <Save className="w-4 h-4" /> Salvar Plano
-                    </button>
-                  )}
-                  <button
-                    onClick={() => { setPlan(null); setShowPlanOptions(true); }}
-                    className="flex-1 py-2 px-4 bg-gray-100 text-gray-700 rounded-xl font-medium flex items-center justify-center gap-2"
-                  >
-                    <RefreshCw className="w-4 h-4" /> Novo Plano
-                  </button>
-                </div>
-
-                {planSaved && (
-                  <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2">
-                    <Check className="w-5 h-5 text-green-600" />
-                    <span className="text-green-700 text-sm font-medium">Plano salvo com sucesso!</span>
+                {/* Ações do Plano */}
+                {!planSaved && (
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-xl border border-green-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Sparkles className="w-5 h-5 text-green-600" />
+                      <h3 className="font-semibold text-green-800">Plano Gerado!</h3>
+                    </div>
+                    <p className="text-sm text-green-700 mb-4">Revise seu plano e escolha uma opção:</p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={savePlan}
+                        className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center gap-2"
+                      >
+                        <Save className="w-4 h-4" /> Salvar Plano
+                      </button>
+                      <button
+                        onClick={adjustPlanWithAI}
+                        className="flex-1 py-2 bg-white border border-green-300 text-green-700 rounded-lg flex items-center justify-center gap-2 hover:bg-green-50"
+                      >
+                        <Edit3 className="w-4 h-4" /> Ajustar com IA
+                      </button>
+                      <button
+                        onClick={discardPlan}
+                        className="py-2 px-4 text-gray-500 hover:text-red-500"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {/* Day Selector */}
-                <div className="bg-white rounded-xl p-4 border">
-                  <h3 className="font-medium mb-3">Selecione o dia</h3>
-                  <div className="flex gap-2 overflow-x-auto pb-2">
-                    {plan.map((_, i) => (
+                {/* Ajustar com IA */}
+                {editingPlan && (
+                  <div className="bg-white p-4 rounded-xl shadow-sm">
+                    <h3 className="font-semibold mb-2">O que você gostaria de mudar?</h3>
+                    <textarea
+                      value={planFeedback}
+                      onChange={(e) => setPlanFeedback(e.target.value)}
+                      placeholder="Ex: Quero mais opções de café da manhã rápido, menos carne vermelha, incluir mais lanches proteicos..."
+                      className="w-full p-3 border rounded-xl text-sm resize-none focus:ring-2 focus:ring-primary-500 outline-none"
+                      rows={3}
+                    />
+                    <div className="flex gap-2 mt-3">
                       <button
-                        key={i}
-                        onClick={() => setSelectedDay(i)}
-                        className={`flex-shrink-0 w-12 h-12 rounded-xl font-medium ${
-                          selectedDay === i ? 'bg-primary-500 text-white' : 'bg-gray-100'
-                        }`}
+                        onClick={() => { setEditingPlan(false); setPlanFeedback(''); }}
+                        className="flex-1 py-2 border rounded-lg"
                       >
-                        {i + 1}
+                        Cancelar
                       </button>
-                    ))}
+                      <button
+                        onClick={generatePlan}
+                        disabled={generating || !planFeedback.trim()}
+                        className="flex-1 py-2 bg-primary-500 text-white rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                        Regenerar
+                      </button>
+                    </div>
                   </div>
+                )}
+
+                {/* Seletor de Dias */}
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {plan.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedDay(idx)}
+                      className={`flex-shrink-0 px-4 py-2 rounded-xl font-medium transition-all ${
+                        selectedDay === idx
+                          ? 'bg-primary-500 text-white'
+                          : 'bg-white border hover:border-primary-300'
+                      }`}
+                    >
+                      Dia {idx + 1}
+                    </button>
+                  ))}
                 </div>
 
-                {/* Day Meals */}
-                <div className="space-y-3">
-                  {plan[selectedDay] && mealTypes.map(({ key, label, icon }) => {
-                    const meal = plan[selectedDay].meals[key as keyof typeof plan[0]['meals']]
-                    if (!meal) return null
-                    
-                    return (
-                      <div key={key} className="bg-white rounded-xl p-4 border">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xl">{icon}</span>
-                          <span className="font-medium">{label}</span>
+                {/* Refeições do Dia */}
+                {plan[selectedDay] && (
+                  <div className="space-y-3">
+                    {Object.entries(plan[selectedDay].meals).map(([type, meal]) => (
+                      <div key={type} className="bg-white p-4 rounded-xl shadow-sm">
+                        <div className="flex items-center gap-3 mb-2">
+                          {getMealIcon(type)}
+                          <div>
+                            <p className="font-semibold">{getMealTypeName(type)}</p>
+                            <p className="text-sm text-gray-500">{meal.name}</p>
+                          </div>
+                          <div className="ml-auto text-right">
+                            <p className="font-semibold text-orange-600">{meal.calories} kcal</p>
+                          </div>
                         </div>
-                        <h4 className="font-semibold">{meal.name}</h4>
-                        <p className="text-sm text-gray-500">{meal.description}</p>
-                        <div className="flex gap-4 mt-2 text-xs text-gray-400">
-                          <span>{meal.calories} kcal</span>
-                          <span>{meal.protein}g prot</span>
-                          <span>{meal.carbs}g carbs</span>
-                          <span>{meal.fat}g fat</span>
+                        <p className="text-sm text-gray-600">{meal.description}</p>
+                        <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                          <span>P: {meal.protein}g</span>
+                          <span>C: {meal.carbs}g</span>
+                          <span>G: {meal.fat}g</span>
                         </div>
                       </div>
-                    )
-                  })}
-                  
-                  {/* Tips */}
-                  {plan[selectedDay]?.tips && plan[selectedDay].tips.length > 0 && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                      <h4 className="font-medium text-yellow-800 mb-2">💡 Dicas do dia</h4>
-                      <ul className="space-y-1">
-                        {plan[selectedDay].tips.map((tip, i) => (
-                          <li key={i} className="text-sm text-yellow-700">• {tip}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
+                    ))}
+
+                    {/* Dicas do Dia */}
+                    {plan[selectedDay].tips && plan[selectedDay].tips.length > 0 && (
+                      <div className="bg-amber-50 p-4 rounded-xl">
+                        <h4 className="font-semibold text-amber-800 mb-2">💡 Dicas do Dia</h4>
+                        <ul className="space-y-1">
+                          {plan[selectedDay].tips.map((tip, idx) => (
+                            <li key={idx} className="text-sm text-amber-700">• {tip}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Botão para ajustar/regenerar quando já salvo */}
+                {planSaved && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowPlanOptions(true)}
+                      className="flex-1 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className="w-5 h-5" /> Gerar Novo Plano
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
         )}
 
-        {/* TAB RECEITAS */}
+        {/* ABA RECEITAS */}
         {tab === 'receitas' && (
           <div className="space-y-4">
-            {/* Category Filter */}
+            {/* Categorias */}
             <div className="flex gap-2 overflow-x-auto pb-2">
-              <button
-                onClick={() => setRecipeCategory('all')}
-                className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium ${
-                  recipeCategory === 'all' ? 'bg-primary-500 text-white' : 'bg-white border'
-                }`}
-              >
-                Todas
-              </button>
-              {categories.map(cat => (
+              {recipeCategories.map(cat => (
                 <button
-                  key={cat}
-                  onClick={() => setRecipeCategory(cat)}
-                  className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium ${
-                    recipeCategory === cat ? 'bg-primary-500 text-white' : 'bg-white border'
+                  key={cat.id}
+                  onClick={() => setRecipeCategory(cat.id)}
+                  className={`flex-shrink-0 px-4 py-2 rounded-xl flex items-center gap-2 transition-all ${
+                    recipeCategory === cat.id
+                      ? 'bg-primary-500 text-white'
+                      : 'bg-white border hover:border-primary-300'
                   }`}
                 >
-                  {cat}
+                  <span>{cat.icon}</span>
+                  <span className="text-sm font-medium">{cat.name}</span>
+                  <span className={`text-xs px-1.5 rounded-full ${
+                    recipeCategory === cat.id ? 'bg-white/20' : 'bg-gray-100'
+                  }`}>
+                    {cat.count}
+                  </span>
                 </button>
               ))}
             </div>
 
-            {/* Generate Recipes */}
-            <div className="bg-gradient-to-r from-primary-500 to-primary-600 rounded-xl p-4 text-white">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-                  <Sparkles className="w-6 h-6" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold">Gerar Receitas com IA</h3>
-                  <p className="text-sm text-white/80">Receitas personalizadas para você</p>
-                </div>
-                <button
-                  onClick={() => generateRecipes(recipeCategory === 'all' ? 'Almoço' : recipeCategory)}
-                  disabled={generating}
-                  className="px-4 py-2 bg-white text-primary-600 rounded-lg font-medium disabled:opacity-50"
-                >
-                  {generating ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Gerar'}
-                </button>
-              </div>
-            </div>
+            {/* Botão Gerar Receitas */}
+            <button
+              onClick={() => generateRecipes(recipeCategory === 'all' ? 'Almoço' : recipeCategory)}
+              disabled={generating}
+              className="w-full py-3 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {generating ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Gerando receitas personalizadas...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5" />
+                  Gerar Novas Receitas com IA
+                </>
+              )}
+            </button>
 
-            {/* Recipe List */}
+            {/* Lista de Receitas */}
             {filteredRecipes.length === 0 ? (
-              <div className="bg-white rounded-xl p-6 border text-center">
-                <ChefHat className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                <p className="text-gray-500">Nenhuma receita salva</p>
-                <p className="text-sm text-gray-400 mt-1">Gere receitas com IA para começar</p>
+              <div className="bg-white p-8 rounded-xl text-center">
+                <ChefHat className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <h3 className="font-semibold text-gray-600 mb-2">Nenhuma receita ainda</h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  Gere receitas personalizadas baseadas no seu perfil
+                </p>
               </div>
             ) : (
               <div className="grid gap-3">
@@ -686,24 +766,30 @@ export default function NutritionPage() {
                   <div
                     key={recipe.id}
                     onClick={() => setSelectedRecipe(recipe)}
-                    className="bg-white rounded-xl p-4 border cursor-pointer hover:border-primary-300 transition-colors"
+                    className="bg-white p-4 rounded-xl shadow-sm cursor-pointer hover:shadow-md transition-shadow"
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h4 className="font-semibold">{recipe.name}</h4>
-                        <p className="text-sm text-gray-500">{recipe.description}</p>
-                        <div className="flex gap-3 mt-2 text-xs text-gray-400">
-                          <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{recipe.prep_time}min</span>
-                          <span className="flex items-center gap-1"><Users className="w-3 h-3" />{recipe.servings} porções</span>
-                          <span>{recipe.calories} kcal</span>
+                    <div className="flex items-start gap-3">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center flex-shrink-0">
+                        <Utensils className="w-6 h-6 text-orange-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold truncate">{recipe.name}</h3>
+                          {recipe.is_favorite && <Heart className="w-4 h-4 text-red-500 fill-red-500 flex-shrink-0" />}
+                        </div>
+                        <p className="text-sm text-gray-500 line-clamp-1">{recipe.description}</p>
+                        <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {recipe.prep_time} min
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Users className="w-3 h-3" /> {recipe.servings} porções
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Flame className="w-3 h-3" /> {recipe.calories} kcal
+                          </span>
                         </div>
                       </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleFavorite(recipe); }}
-                        className={`p-2 rounded-lg ${recipe.is_favorite ? 'text-red-500' : 'text-gray-300'}`}
-                      >
-                        <Heart className={`w-5 h-5 ${recipe.is_favorite ? 'fill-current' : ''}`} />
-                      </button>
                     </div>
                   </div>
                 ))}
@@ -713,76 +799,177 @@ export default function NutritionPage() {
         )}
       </div>
 
-      {/* Recipe Modal */}
+      {/* Modal Receita Detalhada */}
       {selectedRecipe && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center">
-          <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b px-4 py-3 flex items-center justify-between">
-              <h2 className="font-bold text-lg">{selectedRecipe.name}</h2>
-              <button onClick={() => setSelectedRecipe(null)} className="p-2 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b p-4 flex items-center justify-between">
+              <h2 className="font-bold text-lg truncate pr-4">{selectedRecipe.name}</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleFavorite(selectedRecipe); }}
+                  className="p-2 hover:bg-gray-100 rounded-lg"
+                >
+                  <Heart className={`w-5 h-5 ${selectedRecipe.is_favorite ? 'text-red-500 fill-red-500' : 'text-gray-400'}`} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); deleteRecipe(selectedRecipe.id!); }}
+                  className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+                <button onClick={() => setSelectedRecipe(null)} className="p-2 hover:bg-gray-100 rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             
             <div className="p-4 space-y-4">
               <p className="text-gray-600">{selectedRecipe.description}</p>
               
-              <div className="flex gap-4 text-sm">
-                <div className="flex items-center gap-1"><Clock className="w-4 h-4 text-gray-400" />{selectedRecipe.prep_time} min</div>
-                <div className="flex items-center gap-1"><Users className="w-4 h-4 text-gray-400" />{selectedRecipe.servings} porções</div>
-                <div>{selectedRecipe.calories} kcal</div>
+              {/* Info */}
+              <div className="grid grid-cols-4 gap-2">
+                <div className="bg-gray-50 p-3 rounded-xl text-center">
+                  <Clock className="w-5 h-5 mx-auto text-gray-400 mb-1" />
+                  <p className="text-sm font-semibold">{selectedRecipe.prep_time}</p>
+                  <p className="text-xs text-gray-400">min</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-xl text-center">
+                  <Users className="w-5 h-5 mx-auto text-gray-400 mb-1" />
+                  <p className="text-sm font-semibold">{selectedRecipe.servings}</p>
+                  <p className="text-xs text-gray-400">porções</p>
+                </div>
+                <div className="bg-orange-50 p-3 rounded-xl text-center">
+                  <Flame className="w-5 h-5 mx-auto text-orange-400 mb-1" />
+                  <p className="text-sm font-semibold text-orange-600">{selectedRecipe.calories}</p>
+                  <p className="text-xs text-gray-400">kcal</p>
+                </div>
+                <div className="bg-green-50 p-3 rounded-xl text-center">
+                  <Target className="w-5 h-5 mx-auto text-green-400 mb-1" />
+                  <p className="text-sm font-semibold text-green-600">{selectedRecipe.protein}g</p>
+                  <p className="text-xs text-gray-400">prot</p>
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-red-50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-red-600">{selectedRecipe.protein}g</p>
-                  <p className="text-xs text-red-600">Proteína</p>
-                </div>
-                <div className="bg-yellow-50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-yellow-600">{selectedRecipe.carbs}g</p>
-                  <p className="text-xs text-yellow-600">Carbs</p>
-                </div>
-                <div className="bg-green-50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-green-600">{selectedRecipe.fat}g</p>
-                  <p className="text-xs text-green-600">Gordura</p>
-                </div>
-              </div>
-
+              {/* Ingredientes */}
               <div>
-                <h3 className="font-semibold mb-2">Ingredientes</h3>
-                <ul className="space-y-1">
-                  {selectedRecipe.ingredients?.map((ing, i) => (
-                    <li key={i} className="flex items-center gap-2 text-sm">
-                      <span className="w-2 h-2 rounded-full bg-primary-500" />
-                      {ing}
-                    </li>
-                  ))}
-                </ul>
+                <h3 className="font-semibold mb-2">🥗 Ingredientes</h3>
+                {selectedRecipe.ingredients && selectedRecipe.ingredients.length > 0 ? (
+                  <ul className="space-y-1">
+                    {selectedRecipe.ingredients.map((ing, idx) => (
+                      <li key={idx} className="flex items-center gap-2 text-sm">
+                        <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
+                        {ing}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-gray-400 text-sm">Ingredientes não disponíveis</p>
+                )}
               </div>
 
+              {/* Modo de Preparo */}
               <div>
-                <h3 className="font-semibold mb-2">Modo de Preparo</h3>
-                <ol className="space-y-2">
-                  {selectedRecipe.instructions?.map((step, i) => (
-                    <li key={i} className="flex gap-3 text-sm">
-                      <span className="w-6 h-6 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">{i + 1}</span>
-                      {step}
-                    </li>
-                  ))}
-                </ol>
+                <h3 className="font-semibold mb-2">👩‍🍳 Modo de Preparo</h3>
+                {selectedRecipe.instructions && selectedRecipe.instructions.length > 0 ? (
+                  <ol className="space-y-2">
+                    {selectedRecipe.instructions.map((step, idx) => (
+                      <li key={idx} className="flex gap-3 text-sm">
+                        <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center flex-shrink-0 text-xs font-semibold">
+                          {idx + 1}
+                        </span>
+                        <span className="text-gray-600">{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="text-gray-400 text-sm">Instruções não disponíveis</p>
+                )}
               </div>
 
-              <button
-                onClick={() => toggleFavorite(selectedRecipe)}
-                className={`w-full py-3 rounded-xl font-medium flex items-center justify-center gap-2 ${
-                  selectedRecipe.is_favorite 
-                    ? 'bg-red-50 text-red-600 border border-red-200' 
-                    : 'bg-primary-500 text-white'
-                }`}
-              >
-                <Heart className={`w-5 h-5 ${selectedRecipe.is_favorite ? 'fill-current' : ''}`} />
-                {selectedRecipe.is_favorite ? 'Remover dos Favoritos' : 'Adicionar aos Favoritos'}
+              {/* Macros detalhados */}
+              <div className="bg-gray-50 p-3 rounded-xl">
+                <h4 className="text-sm font-medium mb-2">Informação Nutricional (por porção)</h4>
+                <div className="grid grid-cols-3 gap-2 text-center text-sm">
+                  <div>
+                    <p className="font-semibold text-green-600">{selectedRecipe.protein}g</p>
+                    <p className="text-xs text-gray-400">Proteínas</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-amber-600">{selectedRecipe.carbs}g</p>
+                    <p className="text-xs text-gray-400">Carboidratos</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-purple-600">{selectedRecipe.fat}g</p>
+                    <p className="text-xs text-gray-400">Gorduras</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Adicionar Refeição */}
+      {showAddMeal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="font-bold text-lg">Adicionar Refeição</h2>
+              <button onClick={() => setShowAddMeal(false)} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
               </button>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Tipo de Refeição</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'breakfast', name: 'Café', icon: '☕' },
+                    { id: 'morning_snack', name: 'Lanche AM', icon: '🍎' },
+                    { id: 'lunch', name: 'Almoço', icon: '🍲' },
+                    { id: 'afternoon_snack', name: 'Lanche PM', icon: '🥪' },
+                    { id: 'dinner', name: 'Jantar', icon: '🌙' }
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setNewMealType(t.id)}
+                      className={`p-2 rounded-lg border text-sm transition-all ${
+                        newMealType === t.id
+                          ? 'border-primary-500 bg-primary-50 text-primary-600'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      {t.icon} {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sugestões rápidas */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Sugestões Rápidas</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { name: 'Ovos mexidos com pão', calories: 350, protein: 20, carbs: 25, fat: 18 },
+                    { name: 'Iogurte com frutas', calories: 200, protein: 10, carbs: 30, fat: 5 },
+                    { name: 'Frango grelhado com arroz', calories: 450, protein: 35, carbs: 45, fat: 12 },
+                    { name: 'Salada com atum', calories: 300, protein: 25, carbs: 15, fat: 16 },
+                    { name: 'Vitamina de banana', calories: 250, protein: 8, carbs: 40, fat: 6 },
+                    { name: 'Sanduíche natural', calories: 320, protein: 15, carbs: 35, fat: 12 }
+                  ].map((meal, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => addMeal({ ...meal, type: newMealType, description: '' })}
+                      className="p-3 bg-gray-50 rounded-lg text-left hover:bg-gray-100 transition-colors"
+                    >
+                      <p className="font-medium text-sm">{meal.name}</p>
+                      <p className="text-xs text-gray-500">{meal.calories} kcal • P:{meal.protein}g</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
