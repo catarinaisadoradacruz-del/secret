@@ -4,9 +4,9 @@ import { createClient } from '@/lib/supabase/server'
 
 export async function POST(request: Request) {
   try {
-    const { listId, context, preferences } = await request.json()
+    const body = await request.json()
+    const { context, preferences } = body
 
-    // Buscar dados do usuário
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
@@ -17,21 +17,22 @@ export async function POST(request: Request) {
     // Buscar perfil do usuário
     const { data: profile } = await supabase
       .from('users')
-      .select('phase, dietary_restrictions, goals')
+      .select('name, phase, dietary_restrictions')
       .eq('id', user.id)
       .single()
 
     const userPhase = profile?.phase || 'ACTIVE'
+    const userName = profile?.name || 'Usuária'
     const restrictions = profile?.dietary_restrictions || []
 
-    // Gerar prompt baseado no contexto
-    const prompt = buildShoppingPrompt(userPhase, context, preferences, restrictions)
-
-    // Tentar Gemini primeiro
+    // Tentar gerar com Gemini
     const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
+    let items: any[] = []
     
     if (geminiKey) {
       try {
+        const prompt = buildShoppingPrompt(userPhase, context, preferences, restrictions)
+        
         const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent', {
           method: 'POST',
           headers: {
@@ -40,20 +41,15 @@ export async function POST(request: Request) {
           },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 2048,
-            },
+            generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
           }),
         })
 
         if (response.ok) {
           const data = await response.json()
           const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text
-
           if (responseText) {
-            const items = parseShoppingList(responseText)
-            return NextResponse.json({ items, source: 'gemini' })
+            items = parseShoppingList(responseText)
           }
         }
       } catch (error) {
@@ -61,9 +57,46 @@ export async function POST(request: Request) {
       }
     }
 
-    // Fallback: lista pré-definida baseada na fase
-    const fallbackItems = generateFallbackList(userPhase, context)
-    return NextResponse.json({ items: fallbackItems, source: 'fallback' })
+    // Fallback se não conseguiu gerar
+    if (items.length === 0) {
+      items = generateFallbackList(userPhase)
+    }
+
+    // Criar a lista no banco
+    const listName = getListName(userPhase, context)
+    const { data: newList, error: listError } = await supabase
+      .from('shopping_lists')
+      .insert({ user_id: user.id, name: listName })
+      .select()
+      .single()
+
+    if (listError || !newList) {
+      console.error('Erro ao criar lista:', listError)
+      return NextResponse.json({ error: 'Erro ao criar lista' }, { status: 500 })
+    }
+
+    // Inserir os itens
+    const itemsToInsert = items.map(item => ({
+      list_id: newList.id,
+      name: item.name,
+      quantity: item.quantity || '1',
+      category: item.category || 'outros',
+      checked: false
+    }))
+
+    const { error: itemsError } = await supabase
+      .from('shopping_items')
+      .insert(itemsToInsert)
+
+    if (itemsError) {
+      console.error('Erro ao inserir itens:', itemsError)
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      listId: newList.id, 
+      itemsCount: items.length 
+    })
 
   } catch (error) {
     console.error('Erro ao gerar lista:', error)
@@ -71,38 +104,42 @@ export async function POST(request: Request) {
   }
 }
 
+function getListName(phase: string, context?: string): string {
+  if (context) return context
+  
+  const names: Record<string, string> = {
+    'PREGNANT': '🤰 Lista Gestante - Semana Saudável',
+    'POSTPARTUM': '👶 Lista Pós-Parto - Nutrição',
+    'TRYING': '💜 Lista Fertilidade - Essenciais',
+    'ACTIVE': '🥗 Lista Saudável da Semana'
+  }
+  return names[phase] || names['ACTIVE']
+}
+
 function buildShoppingPrompt(
   phase: string, 
-  context: string, 
-  preferences: string,
-  restrictions: string[]
+  context?: string, 
+  preferences?: string,
+  restrictions?: string[]
 ): string {
-  const phaseContext = {
+  const phaseContext: Record<string, string> = {
     'TRYING': 'Mulher tentando engravidar - foco em fertilidade, ácido fólico, zinco, ferro',
-    'PREGNANT': 'Gestante - foco em nutrientes essenciais, ácido fólico, ferro, cálcio, proteínas, evitar alimentos crus',
+    'PREGNANT': 'Gestante - foco em nutrientes essenciais, ácido fólico, ferro, cálcio, proteínas. EVITAR: peixes crus, queijos não pasteurizados',
     'POSTPARTUM': 'Pós-parto/amamentação - foco em recuperação, produção de leite, energia, hidratação',
     'ACTIVE': 'Mulher em busca de alimentação saudável e equilibrada'
   }
 
-  const restrictionsText = restrictions.length > 0 
-    ? `Restrições alimentares: ${restrictions.join(', ')}.` 
+  const restrictionsText = restrictions && restrictions.length > 0 
+    ? `\nRestrições alimentares: ${restrictions.join(', ')}.` 
     : ''
 
-  return `Você é um nutricionista especialista em saúde materna. Gere uma lista de compras saudável.
+  return `Você é um nutricionista especialista. Gere uma lista de compras saudável.
 
-CONTEXTO:
-- Perfil: ${phaseContext[phase as keyof typeof phaseContext] || phaseContext['ACTIVE']}
-- Objetivo: ${context || 'Semana saudável'}
-- Preferências: ${preferences || 'Nenhuma específica'}
-${restrictionsText}
+PERFIL: ${phaseContext[phase] || phaseContext['ACTIVE']}
+${context ? `OBJETIVO: ${context}` : 'OBJETIVO: Semana saudável'}
+${preferences ? `PREFERÊNCIAS: ${preferences}` : ''}${restrictionsText}
 
-REGRAS:
-1. Gere EXATAMENTE no formato JSON abaixo
-2. Inclua 15-20 itens variados e nutritivos
-3. Organize por categorias
-4. Seja específico nos alimentos
-
-Responda APENAS com JSON válido neste formato:
+Responda APENAS com JSON válido neste formato (15-20 itens variados):
 {
   "items": [
     {"name": "Espinafre", "quantity": "2 maços", "category": "verduras"},
@@ -113,32 +150,33 @@ Responda APENAS com JSON válido neste formato:
   ]
 }
 
-Categorias válidas: frutas, verduras, proteinas, laticinios, graos, bebidas, outros`
+Categorias: frutas, verduras, proteinas, laticinios, graos, bebidas, outros`
 }
 
 function parseShoppingList(text: string): any[] {
   try {
-    // Extrair JSON do texto
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
       return parsed.items || []
     }
   } catch (e) {
-    console.error('Erro ao parsear lista:', e)
+    console.error('Erro ao parsear:', e)
   }
   return []
 }
 
-function generateFallbackList(phase: string, context: string): any[] {
+function generateFallbackList(phase: string): any[] {
   const baseList = [
     { name: 'Banana', quantity: '1 dúzia', category: 'frutas' },
     { name: 'Maçã', quantity: '6 unidades', category: 'frutas' },
     { name: 'Laranja', quantity: '1kg', category: 'frutas' },
+    { name: 'Abacate', quantity: '3 unidades', category: 'frutas' },
     { name: 'Espinafre', quantity: '2 maços', category: 'verduras' },
     { name: 'Brócolis', quantity: '500g', category: 'verduras' },
     { name: 'Cenoura', quantity: '500g', category: 'verduras' },
     { name: 'Tomate', quantity: '500g', category: 'verduras' },
+    { name: 'Couve', quantity: '2 maços', category: 'verduras' },
     { name: 'Peito de frango', quantity: '1kg', category: 'proteinas' },
     { name: 'Ovos', quantity: '1 dúzia', category: 'proteinas' },
     { name: 'Feijão preto', quantity: '500g', category: 'proteinas' },
@@ -150,13 +188,12 @@ function generateFallbackList(phase: string, context: string): any[] {
     { name: 'Pão integral', quantity: '1 pacote', category: 'graos' },
   ]
 
-  // Adicionar itens específicos para gestante
+  // Itens extras para gestante
   if (phase === 'PREGNANT') {
     baseList.push(
       { name: 'Sardinha em lata', quantity: '4 latas', category: 'proteinas' },
       { name: 'Lentilha', quantity: '500g', category: 'proteinas' },
-      { name: 'Abacate', quantity: '3 unidades', category: 'frutas' },
-      { name: 'Couve', quantity: '2 maços', category: 'verduras' }
+      { name: 'Suco de laranja natural', quantity: '1L', category: 'bebidas' }
     )
   }
 
