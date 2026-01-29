@@ -1,60 +1,8 @@
-// Versão: 29-01-2026-v3 - Com múltiplos fallbacks de IA
+// Versão: 29-01-2026-v4 - Gemini 2.0 com X-goog-api-key header
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
 const SERPER_API_KEY = '2d09dbaf10aadee46c34bfa7bc41f507d75d707a'
-
-// Lista de provedores de IA para fallback
-const AI_PROVIDERS = [
-  {
-    name: 'Gemini',
-    url: (key: string) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
-    key: () => process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-    formatRequest: (prompt: string, history: any[]) => ({
-      contents: [
-        ...history.map((msg: any) => ({
-          role: msg.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: msg.content }]
-        })),
-        { role: 'user', parts: [{ text: prompt }] }
-      ],
-      generationConfig: {
-        temperature: 0.8,
-        maxOutputTokens: 4096,
-        topP: 0.95,
-      },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-      ],
-    }),
-    extractResponse: (data: any) => data.candidates?.[0]?.content?.parts?.[0]?.text || null,
-  },
-  {
-    name: 'OpenRouter-Llama',
-    url: () => 'https://openrouter.ai/api/v1/chat/completions',
-    key: () => process.env.OPENROUTER_API_KEY,
-    headers: (key: string) => ({
-      'Authorization': `Bearer ${key}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://vita-fit-nutricao.vercel.app',
-      'X-Title': 'VitaFit'
-    }),
-    formatRequest: (prompt: string, history: any[]) => ({
-      model: 'meta-llama/llama-3.2-3b-instruct:free',
-      messages: [
-        { role: 'system', content: prompt.split('\n\nMensagem')[0] },
-        ...history.map((msg: any) => ({ role: msg.role, content: msg.content })),
-        { role: 'user', content: prompt.split('\n\nMensagem da usuária:')[1] || prompt }
-      ],
-      max_tokens: 2048,
-      temperature: 0.8,
-    }),
-    extractResponse: (data: any) => data.choices?.[0]?.message?.content || null,
-  }
-]
 
 export async function POST(request: Request) {
   try {
@@ -114,51 +62,100 @@ export async function POST(request: Request) {
     // Construir prompt
     const fullPrompt = buildPrompt(userName, userPhase, gestationWeek, searchContext, message)
 
-    // Tentar cada provedor de IA
-    for (const provider of AI_PROVIDERS) {
-      const apiKey = provider.key()
-      if (!apiKey) {
-        console.log(`⏭️ ${provider.name}: sem API key configurada`)
-        continue
-      }
-
+    // Tentar Gemini 2.0 com novo formato
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
+    
+    if (geminiKey) {
       try {
-        console.log(`🤖 Tentando ${provider.name}...`)
+        console.log('🤖 Tentando Gemini 2.0 Flash...')
         
-        const headers: Record<string, string> = provider.headers 
-          ? provider.headers(apiKey) 
-          : { 'Content-Type': 'application/json' }
-
-        const url = typeof provider.url === 'function' 
-          ? provider.url(apiKey) 
-          : provider.url
-
-        const response = await fetch(url, {
+        const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent', {
           method: 'POST',
-          headers,
-          body: JSON.stringify(provider.formatRequest(fullPrompt, history)),
+          headers: {
+            'Content-Type': 'application/json',
+            'X-goog-api-key': geminiKey
+          },
+          body: JSON.stringify({
+            contents: [
+              ...history.map((msg: any) => ({
+                role: msg.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: msg.content }]
+              })),
+              { role: 'user', parts: [{ text: fullPrompt }] }
+            ],
+            generationConfig: {
+              temperature: 0.8,
+              maxOutputTokens: 4096,
+              topP: 0.95,
+            },
+            safetySettings: [
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+            ],
+          }),
         })
 
-        if (!response.ok) {
+        if (response.ok) {
+          const data = await response.json()
+          const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text
+
+          if (responseText) {
+            console.log('✅ Gemini 2.0 respondeu com sucesso!')
+            return NextResponse.json({ response: responseText })
+          }
+        } else {
           const errorText = await response.text()
-          console.warn(`❌ ${provider.name} erro ${response.status}:`, errorText.substring(0, 200))
-          continue
+          console.warn(`❌ Gemini erro ${response.status}:`, errorText.substring(0, 300))
         }
-
-        const data = await response.json()
-        const responseText = provider.extractResponse(data)
-
-        if (responseText) {
-          console.log(`✅ ${provider.name} respondeu com sucesso!`)
-          return NextResponse.json({ response: responseText })
-        }
-      } catch (providerError) {
-        console.warn(`❌ ${provider.name} falhou:`, providerError)
+      } catch (geminiError) {
+        console.warn('❌ Gemini falhou:', geminiError)
       }
     }
 
-    // Se nenhum provedor funcionou, usar resposta inteligente local
-    console.log('⚠️ Todos os provedores falharam, usando resposta local')
+    // Tentar OpenRouter como fallback
+    const openRouterKey = process.env.OPENROUTER_API_KEY
+    if (openRouterKey) {
+      try {
+        console.log('🤖 Tentando OpenRouter Llama...')
+        
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://vita-fit-nutricao.vercel.app',
+            'X-Title': 'VitaFit'
+          },
+          body: JSON.stringify({
+            model: 'meta-llama/llama-3.2-3b-instruct:free',
+            messages: [
+              { role: 'system', content: fullPrompt.split('\n\nMensagem')[0] },
+              ...history.map((msg: any) => ({ role: msg.role, content: msg.content })),
+              { role: 'user', content: message }
+            ],
+            max_tokens: 2048,
+            temperature: 0.8,
+          }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          const responseText = data.choices?.[0]?.message?.content
+
+          if (responseText) {
+            console.log('✅ OpenRouter respondeu com sucesso!')
+            return NextResponse.json({ response: responseText })
+          }
+        }
+      } catch (openRouterError) {
+        console.warn('❌ OpenRouter falhou:', openRouterError)
+      }
+    }
+
+    // Fallback local
+    console.log('⚠️ Usando resposta local')
     const localResponse = generateLocalResponse(message, userName, userPhase, gestationWeek, searchContext)
     return NextResponse.json({ response: localResponse })
 
@@ -204,35 +201,21 @@ async function searchWithSerper(query: string): Promise<string | null> {
       })
     })
 
-    if (!response.ok) {
-      console.warn('Serper API error:', response.status)
-      return null
-    }
+    if (!response.ok) return null
 
     const data = await response.json()
-    
     let results = ''
     
-    // Knowledge Graph
     if (data.knowledgeGraph) {
       results += `📚 ${data.knowledgeGraph.title || ''}: ${data.knowledgeGraph.description || ''}\n`
     }
     
-    // Organic results
     if (data.organic && data.organic.length > 0) {
       results += '\n📰 FONTES ENCONTRADAS:\n'
       data.organic.slice(0, 4).forEach((item: any, index: number) => {
         results += `\n${index + 1}. **${item.title}**\n`
         results += `   ${item.snippet}\n`
         results += `   🔗 Fonte: ${item.link}\n`
-      })
-    }
-
-    // People also ask
-    if (data.peopleAlsoAsk && data.peopleAlsoAsk.length > 0) {
-      results += '\n❓ PERGUNTAS RELACIONADAS:\n'
-      data.peopleAlsoAsk.slice(0, 2).forEach((item: any) => {
-        results += `- ${item.question}: ${item.snippet}\n`
       })
     }
     
@@ -288,13 +271,28 @@ function generateLocalResponse(
 ): string {
   const lowerMessage = message.toLowerCase()
   
-  // Saudações
   if (lowerMessage.match(/^(oi|olá|ola|hey|eai|e ai|bom dia|boa tarde|boa noite)/)) {
     return `Olá, ${userName}! 💜 Que bom te ver por aqui! Como posso te ajudar hoje? Posso falar sobre nutrição, exercícios, dicas de bem-estar ou qualquer dúvida que você tenha!`
   }
   
-  // Alimentação
-  if (lowerMessage.match(/(comer|alimentação|comida|alimento|dieta|nutrição|refeição|café|almoço|jantar|lanche)/)) {
+  if (lowerMessage.match(/(ácido fólico|folico|folato)/)) {
+    return `${userName}, o ácido fólico é ESSENCIAL${userPhase === 'PREGNANT' ? ' na gravidez' : ''}! 💚
+
+🥬 **Alimentos ricos em ácido fólico:**
+- Vegetais verde-escuros: espinafre, brócolis, couve
+- Leguminosas: feijão, lentilha, grão-de-bico
+- Frutas cítricas: laranja, limão
+- Abacate
+- Ovos
+- Fígado (com moderação)
+
+📊 **Recomendação diária:** 400-600mcg
+${userPhase === 'PREGNANT' ? '🤰 Na gravidez, muitos médicos recomendam suplementação além da alimentação.' : ''}
+
+O ácido fólico ajuda na formação do tubo neural do bebê e previne malformações. Consulte seu médico sobre suplementação! 💜`
+  }
+  
+  if (lowerMessage.match(/(comer|alimentação|comida|alimento|dieta|nutrição|refeição)/)) {
     if (userPhase === 'PREGNANT') {
       return `${userName}, durante a gestação${gestationWeek ? ` (você está com ${gestationWeek} semanas! 🤰)` : ''}, alguns alimentos são super importantes:
 
@@ -319,7 +317,6 @@ Quer que eu monte um cardápio personalizado para você? 💜`
 Quer dicas específicas para alguma refeição? 💜`
   }
   
-  // Exercícios
   if (lowerMessage.match(/(exercício|treino|academia|atividade física|yoga|pilates|caminhada)/)) {
     if (userPhase === 'PREGNANT') {
       return `${userName}, exercícios na gravidez são ótimos quando feitos com segurança! 🧘‍♀️
@@ -350,27 +347,11 @@ Recomendo começar com:
 O importante é encontrar algo que você goste! Posso sugerir um plano de treino? 💜`
   }
   
-  // Sintomas gravidez
-  if (lowerMessage.match(/(enjoo|náusea|azia|dor|cólica|inchaço|cansaço|insônia|sono)/)) {
-    return `Entendo como é desconfortável, ${userName}. 💜
-
-Algumas dicas que podem ajudar:
-🍋 Para enjoos: gengibre, limão, comer pequenas porções
-🛏️ Para cansaço: descanso, alimentação leve, cochilos
-💧 Para inchaço: elevar as pernas, reduzir sal
-🌙 Para insônia: rotina de sono, chás relaxantes (sem cafeína)
-
-Se os sintomas forem intensos ou persistentes, é importante conversar com seu médico! 
-
-Quer mais detalhes sobre algum sintoma específico?`
-  }
-  
-  // Resposta genérica mas útil
   if (searchContext) {
     return `${userName}, baseado nas informações que encontrei:\n\n${searchContext}\n\nPosso ajudar com mais alguma coisa? 💜`
   }
   
-  return `Oi ${userName}! 💜 Não consegui buscar informações atualizadas no momento, mas estou aqui para ajudar! 
+  return `Oi ${userName}! 💜 Estou aqui para ajudar!
 
 Posso falar sobre:
 🍎 Nutrição e alimentação
