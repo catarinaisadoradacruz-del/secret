@@ -1,7 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { generateMealPlan } from '@/lib/ai/gemini'
-import type { User } from '@/types'
+
+export async function GET() {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
+
+    const { data: plan } = await supabase
+      .from('nutrition_plans')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .single()
+
+    return NextResponse.json({ plan })
+  } catch (error) {
+    console.error('Error fetching nutrition plan:', error)
+    return NextResponse.json({ error: 'Erro ao buscar plano' }, { status: 500 })
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,13 +53,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { days = 7, preferences = [] } = body
+    const { days = 7 } = body
 
     // Generate meal plan with Gemini
-    const plan = await generateMealPlan(profile as User, {
-      days,
-      preferences,
-      restrictions: profile.dietary_restrictions || []
+    const plan = await generateMealPlan({
+      name: profile.name || 'Usuária',
+      phase: profile.phase || 'ACTIVE',
+      gestationWeek: profile.gestation_weeks,
+      goals: profile.goals || [],
+      restrictions: profile.dietary_restrictions || [],
+      isBreastfeeding: profile.is_breastfeeding
     })
 
     return NextResponse.json({
