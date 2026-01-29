@@ -1,10 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { 
-  Play, Pause, RotateCcw, X, Check, Dumbbell, Clock, Flame, Target,
-  ArrowLeft, SkipForward, ChevronRight, Info, Heart, Zap, Trophy
+  Play, Pause, X, Check, Dumbbell, Clock, Flame, Target,
+  ArrowLeft, SkipForward, Info, Trophy
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -23,7 +22,7 @@ interface Workout {
   description: string
   duration: number
   calories: number
-  difficulty: 'Iniciante' | 'Intermediário' | 'Avançado'
+  difficulty: string
   category: string
   forPregnant: boolean
   color: string
@@ -33,419 +32,270 @@ interface Workout {
 
 const WORKOUTS: Workout[] = [
   {
-    id: 'gestante-1', name: 'Gestante Iniciante', description: 'Treino leve e seguro para gestantes',
+    id: 'gestante-1', name: 'Gestante Iniciante', description: 'Treino leve e seguro',
     duration: 15, calories: 80, difficulty: 'Iniciante', category: 'Gestante', forPregnant: true,
     color: 'from-pink-400 to-rose-500', icon: '🤰',
     exercises: [
-      { name: 'Respiração Diafragmática', duration: 120, description: 'Inspire pelo nariz, expire pela boca', tips: ['Relaxe os ombros', 'Expanda a barriga'] },
-      { name: 'Marcha Leve', duration: 90, description: 'Caminhe no lugar elevando os joelhos', tips: ['Mantenha postura ereta', 'Ritmo confortável'] },
-      { name: 'Agachamento com Apoio', duration: 60, reps: 10, description: 'Segure em uma cadeira e agache', tips: ['Joelhos alinhados', 'Desça até onde for confortável'] },
-      { name: 'Elevação de Braços', duration: 60, reps: 12, description: 'Eleve os braços lateralmente', tips: ['Movimento controlado', 'Não passe dos ombros'] },
-      { name: 'Alongamento Suave', duration: 120, description: 'Alongue pescoço, ombros e costas', tips: ['Sem movimentos bruscos', 'Respire profundamente'] },
+      { name: 'Respiração', duration: 120, description: 'Inspire pelo nariz, expire pela boca', tips: ['Relaxe os ombros'] },
+      { name: 'Marcha Leve', duration: 90, description: 'Caminhe no lugar', tips: ['Postura ereta'] },
+      { name: 'Agachamento', duration: 60, reps: 10, description: 'Com apoio na cadeira', tips: ['Joelhos alinhados'] },
+      { name: 'Elevação de Braços', duration: 60, reps: 12, description: 'Lateralmente', tips: ['Controlado'] },
+      { name: 'Alongamento', duration: 120, description: 'Pescoço, ombros e costas', tips: ['Respire fundo'] },
     ]
   },
   {
-    id: 'yoga-prenatal', name: 'Yoga Pré-Natal', description: 'Relaxamento e flexibilidade',
+    id: 'yoga', name: 'Yoga Pré-Natal', description: 'Relaxamento',
     duration: 25, calories: 100, difficulty: 'Iniciante', category: 'Gestante', forPregnant: true,
     color: 'from-purple-400 to-violet-500', icon: '🧘',
     exercises: [
-      { name: 'Postura da Montanha', duration: 60, description: 'Fique em pé, pés paralelos, respire', tips: ['Peso distribuído', 'Ombros relaxados'] },
-      { name: 'Gato-Vaca', duration: 90, description: 'De quatro, alterne arquear e arredondar costas', tips: ['Siga a respiração', 'Movimento fluido'] },
-      { name: 'Postura da Criança', duration: 90, description: 'Joelhos afastados, estenda os braços', tips: ['Joelhos bem abertos', 'Relaxe completamente'] },
-      { name: 'Guerreiro Modificado', duration: 60, description: 'Pernas afastadas, braços estendidos', tips: ['Não force', 'Mantenha equilíbrio'] },
-      { name: 'Borboleta Sentada', duration: 90, description: 'Sente, junte os pés, relaxe joelhos', tips: ['Coluna ereta', 'Respire profundo'] },
-      { name: 'Relaxamento', duration: 180, description: 'Deite de lado esquerdo, relaxe', tips: ['Use travesseiro', 'Feche os olhos'] },
+      { name: 'Postura da Montanha', duration: 60, description: 'Em pé, respire', tips: ['Peso distribuído'] },
+      { name: 'Gato-Vaca', duration: 90, description: 'De quatro, alterne', tips: ['Siga a respiração'] },
+      { name: 'Postura da Criança', duration: 90, description: 'Joelhos afastados', tips: ['Relaxe'] },
+      { name: 'Guerreiro', duration: 60, description: 'Pernas afastadas', tips: ['Não force'] },
+      { name: 'Borboleta', duration: 90, description: 'Sentada, pés juntos', tips: ['Coluna ereta'] },
+      { name: 'Relaxamento', duration: 180, description: 'Lado esquerdo', tips: ['Use travesseiro'] },
     ]
   },
   {
-    id: 'full-body', name: 'Full Body Iniciante', description: 'Treino completo para todo corpo',
+    id: 'fullbody', name: 'Full Body', description: 'Treino completo',
     duration: 20, calories: 150, difficulty: 'Iniciante', category: 'Full Body', forPregnant: false,
     color: 'from-green-400 to-emerald-500', icon: '💪',
     exercises: [
-      { name: 'Aquecimento', duration: 120, description: 'Rotações articulares completas', tips: ['10 rotações cada lado', 'Aqueça bem'] },
-      { name: 'Polichinelos', duration: 45, reps: 20, description: 'Salte abrindo braços e pernas', tips: ['Core ativado', 'Aterrisse suave'] },
-      { name: 'Agachamento', duration: 45, reps: 15, description: 'Desça como se fosse sentar', tips: ['Peso nos calcanhares', 'Joelhos alinhar pés'] },
-      { name: 'Flexão no Joelho', duration: 45, reps: 10, description: 'Flexão com joelhos apoiados', tips: ['Corpo em linha', 'Desça controlado'] },
-      { name: 'Prancha', duration: 30, description: 'Mantenha corpo reto em prancha', tips: ['Quadril alinhado', 'Core contraído'] },
-      { name: 'Alongamento', duration: 120, description: 'Alongue todos os músculos', tips: ['30s cada posição', 'Respire fundo'] },
+      { name: 'Aquecimento', duration: 120, description: 'Rotações articulares', tips: ['Aqueça bem'] },
+      { name: 'Polichinelos', duration: 45, reps: 20, description: 'Salte abrindo', tips: ['Core ativado'] },
+      { name: 'Agachamento', duration: 45, reps: 15, description: 'Desça como sentar', tips: ['Peso nos calcanhares'] },
+      { name: 'Flexão', duration: 45, reps: 10, description: 'Joelhos apoiados', tips: ['Corpo em linha'] },
+      { name: 'Prancha', duration: 30, description: 'Corpo reto', tips: ['Core contraído'] },
+      { name: 'Alongamento', duration: 120, description: 'Todos os músculos', tips: ['Respire'] },
     ]
   },
   {
-    id: 'hiit-20', name: 'HIIT Queima Total', description: 'Alta intensidade para queimar gordura',
+    id: 'hiit', name: 'HIIT Queima', description: 'Alta intensidade',
     duration: 20, calories: 250, difficulty: 'Intermediário', category: 'Cardio', forPregnant: false,
     color: 'from-orange-400 to-red-500', icon: '🔥',
     exercises: [
-      { name: 'Aquecimento Dinâmico', duration: 120, description: 'Corrida no lugar + rotações', tips: ['Aumente intensidade gradual'] },
-      { name: 'Burpees', duration: 30, reps: 10, description: 'Agache, prancha, flexão, salte', tips: ['Máximo esforço', 'Forma correta'] },
-      { name: 'Mountain Climbers', duration: 30, description: 'Em prancha, alterne joelhos rápido', tips: ['Quadril baixo', 'Ritmo intenso'] },
-      { name: 'Jump Squats', duration: 30, reps: 12, description: 'Agachamento com salto', tips: ['Aterrisse suave', 'Explosão máxima'] },
-      { name: 'Prancha com Toque', duration: 30, description: 'Prancha tocando ombros alternados', tips: ['Minimize rotação', 'Core firme'] },
-      { name: 'High Knees', duration: 30, description: 'Corrida elevando joelhos alto', tips: ['Braços acompanham', 'Ritmo constante'] },
-      { name: 'Descanso Ativo', duration: 60, description: 'Caminhada leve no lugar', tips: ['Recupere o fôlego'] },
+      { name: 'Aquecimento', duration: 120, description: 'Corrida leve', tips: ['Gradual'] },
+      { name: 'Burpees', duration: 30, reps: 10, description: 'Completo', tips: ['Máximo esforço'] },
+      { name: 'Mountain Climbers', duration: 30, description: 'Rápido', tips: ['Quadril baixo'] },
+      { name: 'Jump Squats', duration: 30, reps: 12, description: 'Com salto', tips: ['Aterrisse suave'] },
+      { name: 'Prancha Toque', duration: 30, description: 'Toque ombros', tips: ['Core firme'] },
+      { name: 'High Knees', duration: 30, description: 'Joelhos altos', tips: ['Ritmo'] },
     ]
   },
   {
-    id: 'forca-avancado', name: 'Força Avançado', description: 'Treino intenso de força corporal',
-    duration: 30, calories: 300, difficulty: 'Avançado', category: 'Força', forPregnant: false,
-    color: 'from-red-500 to-rose-600', icon: '🏋️',
-    exercises: [
-      { name: 'Aquecimento Completo', duration: 180, description: 'Mobilidade e ativação', tips: ['Prepare articulações', 'Ative core'] },
-      { name: 'Flexão Diamante', duration: 45, reps: 12, description: 'Flexão com mãos juntas', tips: ['Cotovelos junto ao corpo', 'Desça controlado'] },
-      { name: 'Pistol Squat', duration: 60, reps: 6, description: 'Agachamento uma perna', tips: ['Use apoio se precisar', 'Controle total'] },
-      { name: 'Flexão Pike', duration: 45, reps: 10, description: 'Flexão com quadril elevado', tips: ['Foco nos ombros', 'Cabeça para chão'] },
-      { name: 'L-Sit Hold', duration: 20, description: 'Sentado, eleve corpo e pernas', tips: ['Core extremo', 'Comece com joelhos dobrados'] },
-      { name: 'Alongamento Profundo', duration: 180, description: 'Alongue todos os músculos', tips: ['1 min cada grupo', 'Relaxe completamente'] },
-    ]
-  },
-  {
-    id: 'energia-matinal', name: 'Energia Matinal', description: 'Desperte o corpo em 10 minutos',
+    id: 'matinal', name: 'Energia Matinal', description: 'Desperte em 10min',
     duration: 10, calories: 50, difficulty: 'Iniciante', category: 'Especial', forPregnant: true,
     color: 'from-amber-400 to-yellow-500', icon: '☀️',
     exercises: [
-      { name: 'Espreguiçar', duration: 60, description: 'Estique todo o corpo acordando', tips: ['Braços e pernas', 'Boceje'] },
-      { name: 'Rotações de Pescoço', duration: 45, description: 'Gire a cabeça suavemente', tips: ['Movimentos lentos', '5 cada lado'] },
-      { name: 'Gato-Vaca', duration: 60, description: 'Mobilize a coluna', tips: ['Inspire arqueando', 'Expire arredondando'] },
-      { name: 'Marcha Energizante', duration: 120, description: 'Caminhe no lugar aumentando ritmo', tips: ['Comece devagar', 'Aumente energia'] },
-      { name: 'Respiração Energética', duration: 60, description: '10 respirações profundas', tips: ['Inspire energia', 'Expire cansaço'] },
+      { name: 'Espreguiçar', duration: 60, description: 'Estique todo corpo', tips: ['Natural'] },
+      { name: 'Rotações', duration: 45, description: 'Pescoço suave', tips: ['Lento'] },
+      { name: 'Gato-Vaca', duration: 60, description: 'Mobilize coluna', tips: ['Respire'] },
+      { name: 'Marcha', duration: 120, description: 'Aumente ritmo', tips: ['Energia'] },
+      { name: 'Respiração', duration: 60, description: '10 profundas', tips: ['Energize'] },
     ]
   },
 ]
 
-const CATEGORIES = ['Todos', 'Gestante', 'Full Body', 'Cardio', 'Força', 'Especial']
+const CATEGORIES = ['Todos', 'Gestante', 'Full Body', 'Cardio', 'Especial']
 
 export default function WorkoutPage() {
   const [category, setCategory] = useState('Todos')
-  const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null)
-  const [isTraining, setIsTraining] = useState(false)
-  const [currentExercise, setCurrentExercise] = useState(0)
+  const [workout, setWorkout] = useState<Workout | null>(null)
+  const [training, setTraining] = useState(false)
+  const [exerciseIdx, setExerciseIdx] = useState(0)
   const [timeLeft, setTimeLeft] = useState(0)
-  const [isPaused, setIsPaused] = useState(false)
-  const [isResting, setIsResting] = useState(false)
-  const [completed, setCompleted] = useState<number[]>([])
-  const [totalBurned, setTotalBurned] = useState(0)
-  const [showInfo, setShowInfo] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const [resting, setResting] = useState(false)
+  const [done, setDone] = useState<number[]>([])
+  const [burned, setBurned] = useState(0)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    if (isTraining && !isPaused && timeLeft > 0) {
+    if (training && !paused && timeLeft > 0) {
       timerRef.current = setTimeout(() => setTimeLeft(t => t - 1), 1000)
-    } else if (timeLeft === 0 && isTraining && !isPaused) {
-      handleComplete()
+    } else if (timeLeft === 0 && training && !paused) {
+      handleDone()
     }
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
-  }, [timeLeft, isTraining, isPaused])
+  }, [timeLeft, training, paused])
 
-  const filteredWorkouts = WORKOUTS.filter(w => category === 'Todos' || w.category === category)
+  const filtered = WORKOUTS.filter(w => category === 'Todos' || w.category === category)
 
-  const startWorkout = (workout: Workout) => {
-    setSelectedWorkout(workout)
-    setCurrentExercise(0)
-    setCompleted([])
-    setTotalBurned(0)
-    setIsTraining(true)
-    setIsResting(false)
-    setIsPaused(false)
-    setTimeLeft(workout.exercises[0].duration)
+  const start = (w: Workout) => {
+    setWorkout(w)
+    setExerciseIdx(0)
+    setDone([])
+    setBurned(0)
+    setTraining(true)
+    setResting(false)
+    setPaused(false)
+    setTimeLeft(w.exercises[0].duration)
   }
 
-  const handleComplete = () => {
-    if (!selectedWorkout) return
-    
-    if (isResting) {
-      setIsResting(false)
-      if (currentExercise < selectedWorkout.exercises.length - 1) {
-        const next = currentExercise + 1
-        setCurrentExercise(next)
-        setTimeLeft(selectedWorkout.exercises[next].duration)
-      } else {
-        finishWorkout()
-      }
+  const handleDone = () => {
+    if (!workout) return
+    if (resting) {
+      setResting(false)
+      if (exerciseIdx < workout.exercises.length - 1) {
+        const next = exerciseIdx + 1
+        setExerciseIdx(next)
+        setTimeLeft(workout.exercises[next].duration)
+      } else { finish() }
     } else {
-      setCompleted(prev => [...prev, currentExercise])
-      setTotalBurned(prev => prev + selectedWorkout.calories / selectedWorkout.exercises.length)
-      
-      if (currentExercise < selectedWorkout.exercises.length - 1) {
-        setIsResting(true)
-        setTimeLeft(30) // 30s de descanso
-      } else {
-        finishWorkout()
-      }
+      setDone(p => [...p, exerciseIdx])
+      setBurned(p => p + workout.calories / workout.exercises.length)
+      if (exerciseIdx < workout.exercises.length - 1) {
+        setResting(true)
+        setTimeLeft(30)
+      } else { finish() }
     }
   }
 
-  const finishWorkout = async () => {
-    setIsTraining(false)
+  const finish = async () => {
+    setTraining(false)
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
-      if (user && selectedWorkout) {
+      if (user && workout) {
         await supabase.from('workouts').insert({
-          user_id: user.id,
-          name: selectedWorkout.name,
-          duration: selectedWorkout.duration,
-          calories_burned: Math.round(totalBurned),
-          exercises_completed: completed.length + 1,
-          completed: true
+          user_id: user.id, name: workout.name, duration: workout.duration,
+          calories_burned: Math.round(burned), exercises_completed: done.length + 1, completed: true
         })
       }
-    } catch (e) {
-      console.error(e)
-    }
+    } catch (e) { console.error(e) }
   }
 
   const skip = () => {
-    if (!selectedWorkout) return
-    setIsResting(false)
-    if (currentExercise < selectedWorkout.exercises.length - 1) {
-      const next = currentExercise + 1
-      setCurrentExercise(next)
-      setTimeLeft(selectedWorkout.exercises[next].duration)
-    } else {
-      finishWorkout()
-    }
+    if (!workout) return
+    setResting(false)
+    if (exerciseIdx < workout.exercises.length - 1) {
+      const next = exerciseIdx + 1
+      setExerciseIdx(next)
+      setTimeLeft(workout.exercises[next].duration)
+    } else { finish() }
   }
 
-  const formatTime = (s: number) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`
+  const fmt = (s: number) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`
 
-  // TELA DE TREINO ATIVO
-  if (isTraining && selectedWorkout) {
-    const exercise = selectedWorkout.exercises[currentExercise]
-    const progress = ((currentExercise + (isResting ? 0.5 : 0)) / selectedWorkout.exercises.length) * 100
+  // Treino ativo
+  if (training && workout) {
+    const ex = workout.exercises[exerciseIdx]
+    const pct = ((exerciseIdx + (resting ? 0.5 : 0)) / workout.exercises.length) * 100
 
     return (
-      <div className={`min-h-screen bg-gradient-to-br ${selectedWorkout.color} text-white`}>
-        <div className="max-w-2xl mx-auto p-4">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={() => { setIsTraining(false); setSelectedWorkout(null) }} className="p-2 hover:bg-white/10 rounded-full">
-              <X className="w-6 h-6" />
-            </button>
-            <span className="font-semibold">{selectedWorkout.name}</span>
-            <button onClick={() => setShowInfo(!showInfo)} className="p-2 hover:bg-white/10 rounded-full">
-              <Info className="w-6 h-6" />
-            </button>
+      <div className={`min-h-screen bg-gradient-to-br ${workout.color} text-white p-4`}>
+        <div className="max-w-md mx-auto">
+          <div className="flex justify-between mb-4">
+            <button onClick={() => { setTraining(false); setWorkout(null) }} className="p-2"><X className="w-6 h-6" /></button>
+            <span className="font-semibold">{workout.name}</span>
+            <div className="w-10" />
           </div>
 
-          {/* Progress */}
-          <div className="mb-6">
+          <div className="mb-4">
             <div className="flex justify-between text-sm mb-2">
-              <span>{currentExercise + 1}/{selectedWorkout.exercises.length}</span>
-              <span>{Math.round(totalBurned)} kcal</span>
+              <span>{exerciseIdx + 1}/{workout.exercises.length}</span>
+              <span>{Math.round(burned)} kcal</span>
             </div>
             <div className="h-2 bg-white/20 rounded-full overflow-hidden">
-              <motion.div className="h-full bg-white" style={{ width: `${progress}%` }} />
+              <div className="h-full bg-white rounded-full transition-all" style={{ width: `${pct}%` }} />
             </div>
           </div>
 
-          {/* Exercise Display */}
-          <motion.div
-            key={`${currentExercise}-${isResting}`}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="text-center py-8"
-          >
-            <div className="text-8xl mb-6">{isResting ? '😮‍💨' : selectedWorkout.icon}</div>
-            <h2 className="text-2xl font-bold mb-2">
-              {isResting ? 'Descanse' : exercise.name}
-            </h2>
-            <p className="text-white/80 mb-4 max-w-md mx-auto">
-              {isResting ? 'Respire fundo, próximo exercício em breve' : exercise.description}
-            </p>
-            {exercise.reps && !isResting && (
-              <div className="inline-block bg-white/20 px-4 py-2 rounded-xl mb-4">
-                {exercise.reps} repetições
-              </div>
-            )}
-          </motion.div>
-
-          {/* Timer */}
-          <div className="text-center mb-8">
-            <div className="text-8xl font-bold tabular-nums">{formatTime(timeLeft)}</div>
+          <div className="text-center py-8">
+            <div className="text-7xl mb-4">{resting ? '😮‍💨' : workout.icon}</div>
+            <h2 className="text-2xl font-bold mb-2">{resting ? 'Descanse' : ex.name}</h2>
+            <p className="text-white/80 mb-4">{resting ? 'Próximo em breve' : ex.description}</p>
+            {ex.reps && !resting && <div className="bg-white/20 px-4 py-2 rounded-xl inline-block mb-4">{ex.reps} reps</div>}
           </div>
 
-          {/* Controls */}
-          <div className="flex items-center justify-center gap-4 mb-8">
-            <button
-              onClick={() => setIsPaused(!isPaused)}
-              className="w-20 h-20 rounded-full bg-white text-gray-800 flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
-            >
-              {isPaused ? <Play className="w-10 h-10 ml-1" /> : <Pause className="w-10 h-10" />}
+          <div className="text-center text-7xl font-bold mb-8">{fmt(timeLeft)}</div>
+
+          <div className="flex justify-center gap-4 mb-8">
+            <button onClick={() => setPaused(!paused)} className="w-16 h-16 rounded-full bg-white text-gray-800 flex items-center justify-center">
+              {paused ? <Play className="w-8 h-8 ml-1" /> : <Pause className="w-8 h-8" />}
             </button>
-            <button onClick={skip} className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center">
-              <SkipForward className="w-7 h-7" />
+            <button onClick={skip} className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+              <SkipForward className="w-6 h-6" />
             </button>
           </div>
 
-          {/* Next Exercise */}
-          {currentExercise < selectedWorkout.exercises.length - 1 && (
-            <div className="bg-white/10 rounded-2xl p-4 text-center">
+          {exerciseIdx < workout.exercises.length - 1 && (
+            <div className="bg-white/10 rounded-xl p-3 text-center">
               <p className="text-white/60 text-sm">Próximo:</p>
-              <p className="font-semibold">{selectedWorkout.exercises[currentExercise + 1].name}</p>
+              <p className="font-semibold">{workout.exercises[exerciseIdx + 1].name}</p>
             </div>
           )}
-
-          {/* Info Modal */}
-          <AnimatePresence>
-            {showInfo && !isResting && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 z-50 flex items-end"
-                onClick={() => setShowInfo(false)}
-              >
-                <motion.div
-                  initial={{ y: '100%' }}
-                  animate={{ y: 0 }}
-                  exit={{ y: '100%' }}
-                  onClick={e => e.stopPropagation()}
-                  className="bg-white text-gray-900 rounded-t-3xl w-full p-6"
-                >
-                  <h3 className="text-xl font-bold mb-3">{exercise.name}</h3>
-                  <p className="text-gray-600 mb-4">{exercise.description}</p>
-                  <h4 className="font-semibold mb-2">💡 Dicas:</h4>
-                  <ul className="space-y-2">
-                    {exercise.tips.map((tip, i) => (
-                      <li key={i} className="flex items-start gap-2 text-gray-600">
-                        <Check className="w-4 h-4 text-green-500 mt-0.5" />
-                        {tip}
-                      </li>
-                    ))}
-                  </ul>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </div>
     )
   }
 
-  // TELA DE CONCLUSÃO
-  if (selectedWorkout && !isTraining && completed.length > 0) {
+  // Conclusão
+  if (workout && !training && done.length > 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-500 to-emerald-600 text-white flex items-center justify-center p-4">
-        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="text-center">
-          <div className="text-8xl mb-6">🎉</div>
+        <div className="text-center">
+          <div className="text-7xl mb-4">🎉</div>
           <h1 className="text-3xl font-bold mb-2">Parabéns!</h1>
-          <p className="text-xl mb-8 text-white/80">Treino concluído com sucesso!</p>
+          <p className="text-xl mb-6 text-white/80">Treino concluído!</p>
           
-          <div className="bg-white/10 rounded-2xl p-6 mb-8 grid grid-cols-2 gap-4">
-            <div className="text-center">
-              <Flame className="w-8 h-8 mx-auto mb-2" />
-              <p className="text-2xl font-bold">{Math.round(totalBurned)}</p>
-              <p className="text-sm text-white/60">calorias</p>
-            </div>
-            <div className="text-center">
-              <Clock className="w-8 h-8 mx-auto mb-2" />
-              <p className="text-2xl font-bold">{selectedWorkout.duration}</p>
-              <p className="text-sm text-white/60">minutos</p>
-            </div>
-            <div className="text-center">
-              <Target className="w-8 h-8 mx-auto mb-2" />
-              <p className="text-2xl font-bold">{completed.length + 1}</p>
-              <p className="text-sm text-white/60">exercícios</p>
-            </div>
-            <div className="text-center">
-              <Trophy className="w-8 h-8 mx-auto mb-2" />
-              <p className="text-2xl font-bold">+{selectedWorkout.duration * 2}</p>
-              <p className="text-sm text-white/60">pontos</p>
-            </div>
+          <div className="bg-white/10 rounded-2xl p-4 mb-6 grid grid-cols-2 gap-4">
+            <div><Flame className="w-6 h-6 mx-auto mb-1" /><p className="text-xl font-bold">{Math.round(burned)}</p><p className="text-xs text-white/60">kcal</p></div>
+            <div><Clock className="w-6 h-6 mx-auto mb-1" /><p className="text-xl font-bold">{workout.duration}</p><p className="text-xs text-white/60">min</p></div>
+            <div><Target className="w-6 h-6 mx-auto mb-1" /><p className="text-xl font-bold">{done.length + 1}</p><p className="text-xs text-white/60">exercícios</p></div>
+            <div><Trophy className="w-6 h-6 mx-auto mb-1" /><p className="text-xl font-bold">+{workout.duration * 2}</p><p className="text-xs text-white/60">pts</p></div>
           </div>
 
-          <button 
-            onClick={() => { setSelectedWorkout(null); setCompleted([]) }}
-            className="bg-white text-green-600 px-8 py-3 rounded-full font-semibold hover:bg-white/90"
-          >
-            Voltar aos Treinos
+          <button onClick={() => { setWorkout(null); setDone([]) }} className="bg-white text-green-600 px-6 py-3 rounded-full font-semibold">
+            Voltar
           </button>
-        </motion.div>
+        </div>
       </div>
     )
   }
 
-  // LISTA DE TREINOS
+  // Lista
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-100 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center gap-3 mb-4">
-            <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
-              <ArrowLeft className="w-5 h-5 text-gray-600" />
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold">Treinos</h1>
-              <p className="text-sm text-gray-500">{filteredWorkouts.length} treinos disponíveis</p>
-            </div>
-          </div>
-
-          {/* Filtros */}
-          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-            {CATEGORIES.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setCategory(cat)}
-                className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-                  category === cat
-                    ? 'bg-primary-500 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
+      <header className="bg-white border-b px-4 py-4 sticky top-0 z-10">
+        <div className="flex items-center gap-3 mb-3">
+          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl"><ArrowLeft className="w-5 h-5" /></Link>
+          <div><h1 className="text-xl font-bold">Treinos</h1><p className="text-sm text-gray-500">{filtered.length} disponíveis</p></div>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {CATEGORIES.map(c => (
+            <button key={c} onClick={() => setCategory(c)} className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap ${category === c ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-700'}`}>
+              {c}
+            </button>
+          ))}
         </div>
       </header>
 
-      {/* Grid de Treinos */}
-      <div className="max-w-4xl mx-auto p-4">
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredWorkouts.map(workout => (
-            <motion.div
-              key={workout.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              whileHover={{ y: -4 }}
-              className="bg-white rounded-2xl shadow-sm overflow-hidden cursor-pointer"
-              onClick={() => startWorkout(workout)}
-            >
-              <div className={`bg-gradient-to-br ${workout.color} p-5 text-white`}>
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-4xl">{workout.icon}</span>
-                  {workout.forPregnant && (
-                    <span className="bg-white/20 text-xs px-2 py-1 rounded-full">🤰 Seguro</span>
-                  )}
-                </div>
-                <h3 className="text-lg font-bold">{workout.name}</h3>
-                <p className="text-white/80 text-sm">{workout.description}</p>
+      <div className="p-4 grid gap-4 md:grid-cols-2">
+        {filtered.map(w => (
+          <div key={w.id} onClick={() => start(w)} className="bg-white rounded-2xl shadow-sm overflow-hidden cursor-pointer active:scale-[0.98] transition-transform">
+            <div className={`bg-gradient-to-br ${w.color} p-4 text-white`}>
+              <div className="flex items-start justify-between mb-2">
+                <span className="text-3xl">{w.icon}</span>
+                {w.forPregnant && <span className="bg-white/20 text-xs px-2 py-1 rounded-full">🤰 Seguro</span>}
               </div>
-              
-              <div className="p-4">
-                <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-4 h-4" /> {workout.duration} min
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Flame className="w-4 h-4" /> {workout.calories} kcal
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    workout.difficulty === 'Iniciante' ? 'bg-green-100 text-green-700' :
-                    workout.difficulty === 'Intermediário' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  }`}>
-                    {workout.difficulty}
-                  </span>
-                  <span className="text-xs text-gray-500">{workout.exercises.length} exercícios</span>
-                </div>
+              <h3 className="font-bold">{w.name}</h3>
+              <p className="text-white/80 text-sm">{w.description}</p>
+            </div>
+            <div className="p-4">
+              <div className="flex gap-4 text-sm text-gray-500 mb-3">
+                <span className="flex items-center gap-1"><Clock className="w-4 h-4" />{w.duration}min</span>
+                <span className="flex items-center gap-1"><Flame className="w-4 h-4" />{w.calories}kcal</span>
               </div>
-            </motion.div>
-          ))}
-        </div>
+              <div className="flex justify-between items-center">
+                <span className={`text-xs px-2 py-1 rounded-full ${w.difficulty === 'Iniciante' ? 'bg-green-100 text-green-700' : w.difficulty === 'Intermediário' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                  {w.difficulty}
+                </span>
+                <span className="text-xs text-gray-500">{w.exercises.length} exercícios</span>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
