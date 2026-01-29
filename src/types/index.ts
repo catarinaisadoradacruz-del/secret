@@ -9,24 +9,29 @@ export interface User {
   birth_date?: string
   phone?: string
   phase: UserPhase
+  current_phase?: string
   last_menstrual_date?: string
   due_date?: string
+  expected_date?: string
+  gestation_weeks?: number
+  gestation_week?: number
   is_first_pregnancy?: boolean
   baby_birth_date?: string
   is_breastfeeding?: boolean
   delivery_type?: string
-  goals: string[]
-  dietary_restrictions: string[]
-  exercise_level: string
+  goals?: string[]
+  dietary_restrictions?: string[]
+  exercise_level?: string
+  activity_level?: string
   height?: number
   current_weight?: number
   target_weight?: number
   cycle_length?: number
   last_period_date?: string
-  notifications_enabled: boolean
-  onboarding_completed: boolean
-  created_at: string
-  updated_at: string
+  notifications_enabled?: boolean
+  onboarding_completed?: boolean
+  created_at?: string
+  updated_at?: string
 }
 
 export interface Meal {
