@@ -43,7 +43,7 @@ export default function ProfilePage() {
 
         const { data: workouts } = await supabase
           .from('workouts')
-          .select('id')
+          .select('id, created_at')
           .eq('user_id', authUser.id)
           .eq('status', 'COMPLETED')
 
