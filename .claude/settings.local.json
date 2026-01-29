@@ -21,7 +21,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(node scripts/update-premium.js:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(node scripts/check-database.js:*)",
+      "Bash(npx ts-node:*)"
     ]
   }
 }

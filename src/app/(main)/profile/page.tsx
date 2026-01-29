@@ -15,6 +15,11 @@ export default function ProfilePage() {
   const router = useRouter()
   const [user, setUser] = useState<UserType | null>(null)
   const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({
+    activeDays: 0,
+    totalMeals: 0,
+    totalWorkouts: 0
+  })
 
   useEffect(() => {
     async function loadUser() {
@@ -29,6 +34,30 @@ export default function ProfilePage() {
           .single()
 
         setUser(data)
+
+        // Buscar stats reais
+        const { data: meals } = await supabase
+          .from('meals')
+          .select('id, date')
+          .eq('user_id', authUser.id)
+
+        const { data: workouts } = await supabase
+          .from('workouts')
+          .select('id')
+          .eq('user_id', authUser.id)
+          .eq('status', 'COMPLETED')
+
+        // Calcular dias ativos (dias únicos com refeições ou treinos)
+        const uniqueDates = new Set([
+          ...(meals || []).map(m => m.date),
+          ...(workouts || []).map(w => new Date(w.created_at).toISOString().split('T')[0])
+        ])
+
+        setStats({
+          activeDays: uniqueDates.size,
+          totalMeals: meals?.length || 0,
+          totalWorkouts: workouts?.length || 0
+        })
       }
       setLoading(false)
     }
@@ -108,15 +137,15 @@ export default function ProfilePage() {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         <div className="card text-center py-4">
-          <div className="text-2xl font-bold text-primary-600">0</div>
+          <div className="text-2xl font-bold text-primary-600">{stats.activeDays}</div>
           <div className="text-xs text-text-secondary">Dias ativos</div>
         </div>
         <div className="card text-center py-4">
-          <div className="text-2xl font-bold text-secondary-600">0</div>
-          <div className="text-xs text-text-secondary">Refeicoes</div>
+          <div className="text-2xl font-bold text-secondary-600">{stats.totalMeals}</div>
+          <div className="text-xs text-text-secondary">Refeições</div>
         </div>
         <div className="card text-center py-4">
-          <div className="text-2xl font-bold text-accent-500">0</div>
+          <div className="text-2xl font-bold text-accent-500">{stats.totalWorkouts}</div>
           <div className="text-xs text-text-secondary">Treinos</div>
         </div>
       </div>
