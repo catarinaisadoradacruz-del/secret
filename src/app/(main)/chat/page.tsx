@@ -81,9 +81,9 @@ export default function ChatPage() {
   ]
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex flex-col h-[calc(100vh-80px)] bg-background">
       {/* Header */}
-      <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-4">
+      <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-4 flex-shrink-0">
         <Link href="/dashboard" className="p-2 -ml-2 hover:bg-gray-100 rounded-xl">
           <ArrowLeft className="w-5 h-5" />
         </Link>
@@ -99,7 +99,7 @@ export default function ChatPage() {
       </header>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
           <div className="text-center py-8">
             <div className="w-16 h-16 rounded-2xl bg-primary-100 flex items-center justify-center mx-auto mb-4">
@@ -166,21 +166,21 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 p-4 pb-6">
+      {/* Input - Fixo acima da navegação */}
+      <div className="bg-white border-t border-gray-100 p-4 flex-shrink-0">
         <form onSubmit={sendMessage} className="flex items-center gap-3">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Digite sua mensagem..."
-            className="input flex-1"
+            className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             disabled={loading}
           />
           <button
             type="submit"
             disabled={loading || !input.trim()}
-            className="btn-primary w-12 h-12 rounded-xl"
+            className="w-12 h-12 bg-primary-500 text-white rounded-xl flex items-center justify-center hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? (
               <Loader2 className="w-5 h-5 animate-spin" />
