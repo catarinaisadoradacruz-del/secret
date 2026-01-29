@@ -28,32 +28,60 @@ export default function RegisterPage() {
 
     try {
       const supabase = createClient()
+      
+      // 1. Criar usuário no auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } }
+        options: { 
+          data: { name },
+          emailRedirectTo: `${window.location.origin}/auth/callback`
+        }
       })
 
       if (authError) {
-        if (authError.message.includes('already registered')) {
-          setError('Este email já está cadastrado')
+        console.error('Auth error:', authError)
+        if (authError.message.includes('already registered') || authError.message.includes('already exists')) {
+          setError('Este email já está cadastrado. Tente fazer login.')
+        } else if (authError.message.includes('valid email')) {
+          setError('Por favor, insira um email válido.')
         } else {
-          setError('Erro ao criar conta. Tente novamente.')
+          setError('Erro ao criar conta: ' + authError.message)
         }
         return
       }
 
-      if (authData.user) {
-        await supabase.from('users').insert({
-          id: authData.user.id,
-          email,
-          name,
-          phase: 'TRYING',
-          created_at: new Date().toISOString()
-        })
-        router.push('/onboarding')
+      // 2. Verificar se usuário foi criado
+      if (!authData.user) {
+        setError('Erro ao criar usuário. Tente novamente.')
+        return
       }
-    } catch {
+
+      // 3. Criar registro na tabela users com upsert (evita erro de duplicidade)
+      const { error: dbError } = await supabase.from('users').upsert({
+        id: authData.user.id,
+        email: email.toLowerCase().trim(),
+        name: name.trim(),
+        phase: 'TRYING',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }, { 
+        onConflict: 'id',
+        ignoreDuplicates: false 
+      })
+
+      if (dbError) {
+        console.error('DB error:', dbError)
+        // Mesmo com erro no DB, a conta foi criada no auth
+        // Vamos redirecionar e tentar criar o perfil depois
+      }
+
+      // 4. Redirecionar para onboarding ou dashboard
+      router.push('/onboarding')
+      router.refresh()
+
+    } catch (err: any) {
+      console.error('Register error:', err)
       setError('Erro ao criar conta. Tente novamente.')
     } finally {
       setLoading(false)
@@ -86,7 +114,7 @@ export default function RegisterPage() {
         </div>
 
         <h1 className="text-xl font-bold text-center mb-1">Crie sua conta</h1>
-        <p className="text-gray-500 text-center text-sm mb-6">Comece sua jornada de saúde</p>
+        <p className="text-gray-500 text-center text-sm mb-6">Comece sua jornada de bem-estar</p>
 
         {error && (
           <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-4">{error}</div>
@@ -178,10 +206,6 @@ export default function RegisterPage() {
         <p className="text-center text-sm text-gray-500 mt-4">
           Já tem uma conta?{' '}
           <Link href="/login" className="text-primary-600 font-medium">Entrar</Link>
-        </p>
-
-        <p className="text-center text-xs text-gray-400 mt-4">
-          Ao criar uma conta, você concorda com nossos Termos de Uso e Política de Privacidade
         </p>
       </div>
     </div>
