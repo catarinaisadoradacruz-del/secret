@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { 
   ArrowLeft, Send, Sparkles, Loader2, Menu, Plus, MessageCircle, X,
   MoreVertical, Edit2, Trash2, Check, ChevronLeft, ChevronRight, Search
@@ -28,7 +28,6 @@ export default function ChatPage() {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [currentSession, setCurrentSession] = useState<string | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [editingSession, setEditingSession] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -46,7 +45,6 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Fechar menu ao clicar fora
   useEffect(() => {
     const handleClick = () => setMenuOpen(null)
     if (menuOpen) {
@@ -68,12 +66,7 @@ export default function ChatPage() {
         .order('updated_at', { ascending: false })
         .limit(100)
 
-      if (error) {
-        console.error('Error loading sessions:', error)
-        return
-      }
-
-      if (data) {
+      if (!error && data) {
         setSessions(data)
       }
     } catch (e) { 
@@ -81,11 +74,11 @@ export default function ChatPage() {
     }
   }
 
-  const loadMessages = useCallback(async (sessionId: string) => {
-    if (loadingMessages) return
-    
-    setLoadingMessages(true)
+  const loadMessages = async (sessionId: string) => {
+    // Limpar mensagens anteriores PRIMEIRO
+    setMessages([])
     setCurrentSession(sessionId)
+    setLoadingMessages(true)
     setShowMobileSidebar(false)
     
     try {
@@ -101,13 +94,14 @@ export default function ChatPage() {
         return
       }
 
+      // Setar as mensagens DESTA sessão específica
       setMessages(data || [])
     } catch (e) { 
       console.error('Load messages error:', e) 
     } finally {
       setLoadingMessages(false)
     }
-  }, [loadingMessages])
+  }
 
   const createNewSession = () => {
     setCurrentSession(null)
@@ -123,22 +117,11 @@ export default function ChatPage() {
     
     try {
       const supabase = createClient()
-      
-      // Deletar mensagens primeiro
       await supabase.from('messages').delete().eq('session_id', sessionId)
+      await supabase.from('chat_sessions').delete().eq('id', sessionId)
       
-      // Depois deletar a sessão
-      const { error } = await supabase.from('chat_sessions').delete().eq('id', sessionId)
-      
-      if (error) {
-        console.error('Error deleting session:', error)
-        return
-      }
-      
-      // Atualizar lista
       setSessions(prev => prev.filter(s => s.id !== sessionId))
       
-      // Se era a sessão atual, limpar
       if (currentSession === sessionId) {
         setCurrentSession(null)
         setMessages([])
@@ -163,15 +146,10 @@ export default function ChatPage() {
     
     try {
       const supabase = createClient()
-      const { error } = await supabase
+      await supabase
         .from('chat_sessions')
         .update({ title: editTitle.trim() })
         .eq('id', editingSession)
-      
-      if (error) {
-        console.error('Error updating title:', error)
-        return
-      }
       
       setSessions(prev => prev.map(s => 
         s.id === editingSession ? { ...s, title: editTitle.trim() } : s
@@ -182,11 +160,6 @@ export default function ChatPage() {
     }
   }
 
-  const cancelEdit = () => {
-    setEditingSession(null)
-    setEditTitle('')
-  }
-
   const sendMessage = async () => {
     if (!input.trim() || loading) return
 
@@ -194,13 +167,13 @@ export default function ChatPage() {
     setInput('')
     setLoading(true)
 
-    const tempUserMsg: Message = {
-      id: 'temp-' + Date.now(),
+    const tempId = 'temp-' + Date.now()
+    setMessages(prev => [...prev, {
+      id: tempId,
       role: 'user',
       content: userMessage,
       created_at: new Date().toISOString()
-    }
-    setMessages(prev => [...prev, tempUserMsg])
+    }])
 
     try {
       const supabase = createClient()
@@ -209,22 +182,16 @@ export default function ChatPage() {
 
       let sessionId = currentSession
       
-      // Criar nova sessão se não existir
       if (!sessionId) {
-        const title = userMessage.length > 50 
-          ? userMessage.slice(0, 47) + '...' 
-          : userMessage
+        const title = userMessage.length > 50 ? userMessage.slice(0, 47) + '...' : userMessage
           
-        const { data: newSession, error: sessionError } = await supabase
+        const { data: newSession, error } = await supabase
           .from('chat_sessions')
           .insert({ user_id: user.id, title })
           .select('id, title, updated_at')
           .single()
         
-        if (sessionError) {
-          console.error('Error creating session:', sessionError)
-          throw sessionError
-        }
+        if (error) throw error
         
         if (newSession) {
           sessionId = newSession.id
@@ -234,14 +201,14 @@ export default function ChatPage() {
       }
 
       // Salvar mensagem do usuário
-      const { data: savedUserMsg } = await supabase
+      const { data: savedMsg } = await supabase
         .from('messages')
         .insert({ session_id: sessionId, role: 'user', content: userMessage })
-        .select('id, role, content, created_at')
+        .select()
         .single()
 
-      if (savedUserMsg) {
-        setMessages(prev => prev.map(m => m.id === tempUserMsg.id ? savedUserMsg : m))
+      if (savedMsg) {
+        setMessages(prev => prev.map(m => m.id === tempId ? savedMsg : m))
       }
 
       // Chamar API
@@ -252,33 +219,25 @@ export default function ChatPage() {
       })
 
       const data = await response.json()
-      const assistantContent = data.response || 'Desculpe, não consegui processar sua mensagem.'
+      const assistantContent = data.response || 'Desculpe, não consegui processar.'
       
       // Salvar resposta
-      const { data: savedAssistantMsg } = await supabase
+      const { data: assistantMsg } = await supabase
         .from('messages')
         .insert({ session_id: sessionId, role: 'assistant', content: assistantContent })
-        .select('id, role, content, created_at')
+        .select()
         .single()
 
-      if (savedAssistantMsg) {
-        setMessages(prev => [...prev, savedAssistantMsg])
-      } else {
-        setMessages(prev => [...prev, {
-          id: 'assistant-' + Date.now(),
-          role: 'assistant',
-          content: assistantContent,
-          created_at: new Date().toISOString()
-        }])
+      if (assistantMsg) {
+        setMessages(prev => [...prev, assistantMsg])
       }
 
-      // Atualizar timestamp da sessão
+      // Atualizar sessão
       await supabase
         .from('chat_sessions')
         .update({ updated_at: new Date().toISOString() })
         .eq('id', sessionId)
 
-      // Atualizar lista de sessões
       setSessions(prev => {
         const updated = prev.map(s => 
           s.id === sessionId ? { ...s, updated_at: new Date().toISOString() } : s
@@ -287,16 +246,13 @@ export default function ChatPage() {
       })
 
     } catch (e) {
-      console.error('Send message error:', e)
-      setMessages(prev => {
-        const filtered = prev.filter(m => m.id !== tempUserMsg.id)
-        return [...filtered, {
-          id: 'error-' + Date.now(),
-          role: 'assistant',
-          content: 'Desculpe, ocorreu um erro. Tente novamente.',
-          created_at: new Date().toISOString()
-        }]
-      })
+      console.error('Send error:', e)
+      setMessages(prev => [...prev.filter(m => !m.id.startsWith('temp-')), {
+        id: 'error-' + Date.now(),
+        role: 'assistant',
+        content: 'Erro ao enviar. Tente novamente.',
+        created_at: new Date().toISOString()
+      }])
     } finally {
       setLoading(false)
     }
@@ -310,7 +266,7 @@ export default function ChatPage() {
     
     if (days === 0) return 'Hoje'
     if (days === 1) return 'Ontem'
-    if (days < 7) return `${days} dias atrás`
+    if (days < 7) return `${days}d atrás`
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
 
@@ -318,43 +274,31 @@ export default function ChatPage() {
     s.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const sidebarWidth = sidebarCollapsed ? 'w-0 md:w-16' : 'w-72'
-
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Sidebar Desktop */}
-      <div className={`hidden md:flex flex-col bg-white border-r transition-all duration-300 ${sidebarWidth}`}>
+      <div className={`hidden md:flex flex-col bg-white border-r transition-all duration-300 ${sidebarCollapsed ? 'w-16' : 'w-72'}`}>
         {!sidebarCollapsed ? (
           <>
-            {/* Header */}
             <div className="p-3 border-b flex items-center justify-between">
               <h2 className="font-bold">Conversas</h2>
-              <button 
-                onClick={() => setSidebarCollapsed(true)}
-                className="p-1.5 hover:bg-gray-100 rounded-lg"
-                title="Recolher menu"
-              >
+              <button onClick={() => setSidebarCollapsed(true)} className="p-1.5 hover:bg-gray-100 rounded-lg" title="Recolher">
                 <ChevronLeft className="w-5 h-5" />
               </button>
             </div>
             
-            {/* Nova conversa */}
             <div className="p-2">
-              <button 
-                onClick={createNewSession} 
-                className="w-full flex items-center justify-center gap-2 p-2.5 bg-primary-500 hover:bg-primary-600 text-white rounded-xl font-medium transition-colors"
-              >
+              <button onClick={createNewSession} className="w-full flex items-center justify-center gap-2 p-2.5 bg-primary-500 hover:bg-primary-600 text-white rounded-xl font-medium transition-colors">
                 <Plus className="w-5 h-5" /> Nova Conversa
               </button>
             </div>
 
-            {/* Busca */}
             <div className="px-2 pb-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Buscar conversas..."
+                  placeholder="Buscar..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary-500 outline-none"
@@ -362,20 +306,17 @@ export default function ChatPage() {
               </div>
             </div>
 
-            {/* Lista de sessões */}
             <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-1">
               {filteredSessions.length === 0 ? (
                 <p className="text-center text-gray-400 text-sm py-8">
-                  {searchQuery ? 'Nenhuma conversa encontrada' : 'Nenhuma conversa ainda'}
+                  {searchQuery ? 'Nenhuma encontrada' : 'Nenhuma conversa'}
                 </p>
               ) : (
                 filteredSessions.map(s => (
                   <div
                     key={s.id}
                     className={`group relative rounded-xl transition-colors cursor-pointer ${
-                      currentSession === s.id 
-                        ? 'bg-primary-50 border border-primary-200' 
-                        : 'hover:bg-gray-100 border border-transparent'
+                      currentSession === s.id ? 'bg-primary-50 border border-primary-200' : 'hover:bg-gray-100 border border-transparent'
                     }`}
                     onClick={() => loadMessages(s.id)}
                   >
@@ -389,20 +330,14 @@ export default function ChatPage() {
                           autoFocus
                           onClick={(e) => e.stopPropagation()}
                         />
-                        <button type="submit" className="p-1 text-green-600 hover:bg-green-50 rounded">
-                          <Check className="w-4 h-4" />
-                        </button>
-                        <button type="button" onClick={(e) => { e.stopPropagation(); cancelEdit(); }} className="p-1 text-gray-400 hover:bg-gray-100 rounded">
-                          <X className="w-4 h-4" />
-                        </button>
+                        <button type="submit" className="p-1 text-green-600 hover:bg-green-50 rounded"><Check className="w-4 h-4" /></button>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setEditingSession(null); }} className="p-1 text-gray-400 hover:bg-gray-100 rounded"><X className="w-4 h-4" /></button>
                       </form>
                     ) : (
                       <div className="p-2.5 pr-8">
                         <div className="flex items-center gap-2">
                           <MessageCircle className={`w-4 h-4 flex-shrink-0 ${currentSession === s.id ? 'text-primary-600' : 'text-gray-400'}`} />
-                          <span className={`truncate text-sm ${currentSession === s.id ? 'text-primary-700 font-medium' : ''}`}>
-                            {s.title}
-                          </span>
+                          <span className={`truncate text-sm ${currentSession === s.id ? 'text-primary-700 font-medium' : ''}`}>{s.title}</span>
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5 ml-6">{formatDate(s.updated_at)}</p>
                       </div>
@@ -411,27 +346,18 @@ export default function ChatPage() {
                     {editingSession !== s.id && (
                       <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setMenuOpen(menuOpen === s.id ? null : s.id)
-                          }}
+                          onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === s.id ? null : s.id); }}
                           className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-all"
                         >
                           <MoreVertical className="w-4 h-4 text-gray-500" />
                         </button>
                         
                         {menuOpen === s.id && (
-                          <div className="absolute right-0 top-8 bg-white border rounded-lg shadow-lg py-1 z-20 min-w-[130px]">
-                            <button
-                              onClick={(e) => startEditSession(s, e)}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-                            >
+                          <div className="absolute right-0 top-8 bg-white border rounded-lg shadow-lg py-1 z-20 min-w-[120px]">
+                            <button onClick={(e) => startEditSession(s, e)} className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2">
                               <Edit2 className="w-4 h-4" /> Renomear
                             </button>
-                            <button
-                              onClick={(e) => deleteSession(s.id, e)}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2"
-                            >
+                            <button onClick={(e) => deleteSession(s.id, e)} className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2">
                               <Trash2 className="w-4 h-4" /> Excluir
                             </button>
                           </div>
@@ -444,20 +370,11 @@ export default function ChatPage() {
             </div>
           </>
         ) : (
-          /* Sidebar Collapsed */
           <div className="flex flex-col items-center py-3 gap-2">
-            <button 
-              onClick={() => setSidebarCollapsed(false)}
-              className="p-2 hover:bg-gray-100 rounded-lg"
-              title="Expandir menu"
-            >
+            <button onClick={() => setSidebarCollapsed(false)} className="p-2 hover:bg-gray-100 rounded-lg" title="Expandir">
               <ChevronRight className="w-5 h-5" />
             </button>
-            <button 
-              onClick={createNewSession}
-              className="p-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg"
-              title="Nova conversa"
-            >
+            <button onClick={createNewSession} className="p-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg" title="Nova conversa">
               <Plus className="w-5 h-5" />
             </button>
           </div>
@@ -471,16 +388,11 @@ export default function ChatPage() {
           <div className="fixed inset-y-0 left-0 z-50 w-72 bg-white flex flex-col md:hidden">
             <div className="p-3 border-b flex items-center justify-between">
               <h2 className="font-bold">Conversas</h2>
-              <button onClick={() => setShowMobileSidebar(false)} className="p-2 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
+              <button onClick={() => setShowMobileSidebar(false)} className="p-2 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
             
             <div className="p-2">
-              <button 
-                onClick={createNewSession} 
-                className="w-full flex items-center justify-center gap-2 p-2.5 bg-primary-500 text-white rounded-xl font-medium"
-              >
+              <button onClick={createNewSession} className="w-full flex items-center justify-center gap-2 p-2.5 bg-primary-500 text-white rounded-xl font-medium">
                 <Plus className="w-5 h-5" /> Nova Conversa
               </button>
             </div>
@@ -490,9 +402,7 @@ export default function ChatPage() {
                 <button
                   key={s.id}
                   onClick={() => loadMessages(s.id)}
-                  className={`w-full text-left p-2.5 rounded-xl transition-colors ${
-                    currentSession === s.id ? 'bg-primary-50' : 'hover:bg-gray-100'
-                  }`}
+                  className={`w-full text-left p-2.5 rounded-xl transition-colors ${currentSession === s.id ? 'bg-primary-50' : 'hover:bg-gray-100'}`}
                 >
                   <div className="flex items-center gap-2">
                     <MessageCircle className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -506,33 +416,23 @@ export default function ChatPage() {
         </>
       )}
 
-      {/* Main Chat */}
+      {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
         <header className="bg-white border-b px-4 py-3 flex items-center gap-3">
-          <button onClick={() => setShowMobileSidebar(true)} className="p-2 hover:bg-gray-100 rounded-xl md:hidden">
-            <Menu className="w-5 h-5" />
-          </button>
-          {sidebarCollapsed && (
-            <button onClick={() => setSidebarCollapsed(false)} className="p-2 hover:bg-gray-100 rounded-xl hidden md:block">
-              <Menu className="w-5 h-5" />
-            </button>
-          )}
-          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
+          <button onClick={() => setShowMobileSidebar(true)} className="p-2 hover:bg-gray-100 rounded-xl md:hidden"><Menu className="w-5 h-5" /></button>
+          {sidebarCollapsed && <button onClick={() => setSidebarCollapsed(false)} className="p-2 hover:bg-gray-100 rounded-xl hidden md:block"><Menu className="w-5 h-5" /></button>}
+          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl"><ArrowLeft className="w-5 h-5" /></Link>
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div>
               <h1 className="font-semibold">Vita AI</h1>
-              <p className="text-xs text-gray-500">Sua assistente de saúde</p>
+              <p className="text-xs text-gray-500">Sua assistente</p>
             </div>
           </div>
         </header>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {loadingMessages ? (
             <div className="flex items-center justify-center py-12">
@@ -544,23 +444,12 @@ export default function ChatPage() {
                 <Sparkles className="w-8 h-8 text-white" />
               </div>
               <h2 className="text-xl font-semibold mb-2">Olá! Sou a Vita 💜</h2>
-              <p className="text-gray-500 max-w-md mx-auto mb-6">
-                Sua assistente de nutrição e bem-estar. Pergunte sobre alimentação, exercícios, gestação ou qualquer dúvida!
-              </p>
+              <p className="text-gray-500 max-w-md mx-auto mb-6">Sua assistente de nutrição e bem-estar.</p>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg mx-auto">
-                {[
-                  'O que posso comer durante a gestação?',
-                  'Quais exercícios são seguros?',
-                  'Como melhorar minha alimentação?',
-                  'Dicas para ter mais energia'
-                ].map((suggestion, i) => (
-                  <button
-                    key={i}
-                    onClick={() => { setInput(suggestion); inputRef.current?.focus(); }}
-                    className="p-3 text-left text-sm bg-white border border-gray-200 rounded-xl hover:border-primary-300 hover:bg-primary-50 transition-colors"
-                  >
-                    {suggestion}
+                {['O que posso comer na gestação?', 'Quais exercícios são seguros?', 'Como melhorar minha alimentação?', 'Dicas para mais energia'].map((s, i) => (
+                  <button key={i} onClick={() => { setInput(s); inputRef.current?.focus(); }} className="p-3 text-left text-sm bg-white border rounded-xl hover:border-primary-300 hover:bg-primary-50">
+                    {s}
                   </button>
                 ))}
               </div>
@@ -568,11 +457,7 @@ export default function ChatPage() {
           ) : (
             messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] p-4 rounded-2xl ${
-                  msg.role === 'user'
-                    ? 'bg-primary-500 text-white rounded-br-md'
-                    : 'bg-white shadow-sm border rounded-bl-md'
-                }`}>
+                <div className={`max-w-[85%] p-4 rounded-2xl ${msg.role === 'user' ? 'bg-primary-500 text-white rounded-br-md' : 'bg-white shadow-sm border rounded-bl-md'}`}>
                   <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                 </div>
               </div>
@@ -592,7 +477,6 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
         <div className="p-4 bg-white border-t">
           <div className="flex gap-2 max-w-4xl mx-auto">
             <input
@@ -604,11 +488,7 @@ export default function ChatPage() {
               placeholder="Digite sua mensagem..."
               className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
             />
-            <button
-              onClick={sendMessage}
-              disabled={loading || !input.trim()}
-              className="px-4 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
+            <button onClick={sendMessage} disabled={loading || !input.trim()} className="px-4 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl disabled:opacity-50 transition-colors">
               <Send className="w-5 h-5" />
             </button>
           </div>
