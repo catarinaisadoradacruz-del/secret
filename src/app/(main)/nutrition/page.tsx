@@ -285,7 +285,7 @@ export default function NutritionPage() {
       await supabase.from('recipes').update({ is_favorite: !recipe.is_favorite }).eq('id', recipe.id)
       setRecipes(prev => prev.map(r => r.id === recipe.id ? { ...r, is_favorite: !r.is_favorite } : r))
       if (selectedRecipe?.id === recipe.id) {
-        setSelectedRecipe({ ...selectedRecipe, is_favorite: !selectedRecipe.is_favorite })
+        if (selectedRecipe) setSelectedRecipe({ ...selectedRecipe, is_favorite: !selectedRecipe.is_favorite })
       }
     } catch (e) { console.error(e) }
   }
@@ -977,3 +977,4 @@ export default function NutritionPage() {
     </div>
   )
 }
+
