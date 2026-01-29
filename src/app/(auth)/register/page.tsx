@@ -94,21 +94,20 @@ export default function RegisterPage() {
 
       if (insertError) {
         console.error('Insert error:', insertError)
-        // Se for erro de duplicidade, ignora e continua
-        if (!insertError.message.includes('duplicate') && !insertError.message.includes('unique')) {
-          // Erro real, mas conta foi criada no auth
-          // Tenta fazer login e criar perfil depois
-        }
       }
 
       // 4. Criar pontos iniciais
-      await supabase.from('user_points').insert({
-        user_id: authData.user.id,
-        total_points: 0,
-        current_streak: 0,
-        longest_streak: 0,
-        level: 1
-      }).catch(() => {})
+      try {
+        await supabase.from('user_points').insert({
+          user_id: authData.user.id,
+          total_points: 0,
+          current_streak: 0,
+          longest_streak: 0,
+          level: 1
+        })
+      } catch (e) {
+        console.error('Points error:', e)
+      }
 
       // 5. Redirecionar
       router.push('/onboarding')
