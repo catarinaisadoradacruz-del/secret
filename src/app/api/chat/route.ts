@@ -1,51 +1,50 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
-
-// Configurar API Key
-const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || ''
 
 export async function POST(request: Request) {
   try {
     const { message, history = [] } = await request.json()
 
     if (!message) {
-      return NextResponse.json(
-        { error: 'Mensagem é obrigatória' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Mensagem é obrigatória' }, { status: 400 })
     }
 
-    // Verificar se a API key existe
+    // Verificar todas as possíveis variáveis de ambiente
+    const apiKey = process.env.GEMINI_API_KEY 
+      || process.env.GOOGLE_GENERATIVE_AI_API_KEY 
+      || process.env.NEXT_PUBLIC_GEMINI_API_KEY
+      || ''
+
     if (!apiKey) {
-      console.error('❌ GEMINI_API_KEY não configurada!')
-      return NextResponse.json(
-        { response: 'Desculpe, estou com problemas técnicos. Tente novamente mais tarde.' },
-        { status: 200 }
-      )
+      console.error('❌ Nenhuma API key encontrada!')
+      console.error('GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'SET' : 'NOT SET')
+      console.error('GOOGLE_GENERATIVE_AI_API_KEY:', process.env.GOOGLE_GENERATIVE_AI_API_KEY ? 'SET' : 'NOT SET')
+      console.error('NEXT_PUBLIC_GEMINI_API_KEY:', process.env.NEXT_PUBLIC_GEMINI_API_KEY ? 'SET' : 'NOT SET')
+      
+      return NextResponse.json({ 
+        response: 'Olá! Estou com um probleminha técnico no momento. Por favor, tente novamente em alguns minutos! 💜' 
+      })
     }
 
     // Buscar contexto do usuário
-    let userName = 'Usuária'
+    let userName = 'Querida'
     let userPhase = 'ACTIVE'
     let gestationWeek: number | undefined
-    let restrictions: string[] = []
 
     try {
       const supabase = await createClient()
-      const { data: { user: authUser } } = await supabase.auth.getUser()
+      const { data: { user } } = await supabase.auth.getUser()
 
-      if (authUser) {
+      if (user) {
         const { data: userData } = await supabase
           .from('users')
-          .select('name, phase, last_menstrual_date, dietary_restrictions')
-          .eq('id', authUser.id)
+          .select('name, phase, last_menstrual_date')
+          .eq('id', user.id)
           .single()
 
         if (userData) {
-          userName = userData.name || 'Usuária'
+          userName = userData.name || 'Querida'
           userPhase = userData.phase || 'ACTIVE'
-          restrictions = userData.dietary_restrictions || []
           
           if (userPhase === 'PREGNANT' && userData.last_menstrual_date) {
             const dum = new Date(userData.last_menstrual_date)
@@ -56,108 +55,113 @@ export async function POST(request: Request) {
         }
       }
     } catch (dbError) {
-      console.warn('Erro ao buscar usuário:', dbError)
+      console.warn('Erro ao buscar usuário (continuando):', dbError)
     }
 
-    // Construir system prompt
-    const systemPrompt = buildSystemPrompt(userName, userPhase, gestationWeek, restrictions)
+    // Construir prompt
+    const systemPrompt = buildPrompt(userName, userPhase, gestationWeek)
 
-    // Inicializar Gemini
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+    // Chamar API Gemini diretamente via fetch
+    const geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            { role: 'user', parts: [{ text: systemPrompt }] },
+            { role: 'model', parts: [{ text: 'Entendido! Sou a Vita, sua assistente de nutrição e bem-estar. Estou pronta para ajudar! 💜' }] },
+            ...history.map((msg: { role: string; content: string }) => ({
+              role: msg.role === 'assistant' ? 'model' : 'user',
+              parts: [{ text: msg.content }]
+            })),
+            { role: 'user', parts: [{ text: message }] }
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 1024,
+          },
+          safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+          ]
+        })
+      }
+    )
 
-    // Criar histórico de chat
-    const chatHistory = [
-      { role: 'user' as const, parts: [{ text: 'Sistema: ' + systemPrompt }] },
-      { role: 'model' as const, parts: [{ text: 'Entendido! Estou pronta para ajudar! 💜' }] },
-      ...history.map((msg: { role: string; content: string }) => ({
-        role: msg.role === 'assistant' ? 'model' as const : 'user' as const,
-        parts: [{ text: msg.content }]
-      }))
-    ]
+    if (!geminiResponse.ok) {
+      const errorText = await geminiResponse.text()
+      console.error('Erro Gemini:', geminiResponse.status, errorText)
+      throw new Error(`Gemini API error: ${geminiResponse.status}`)
+    }
 
-    const chat = model.startChat({ history: chatHistory })
-    const result = await chat.sendMessage(message)
-    const response = result.response.text()
+    const geminiData = await geminiResponse.json()
+    
+    const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text 
+      || 'Desculpe, não consegui gerar uma resposta. Pode reformular sua pergunta? 💜'
 
-    return NextResponse.json({ response })
+    return NextResponse.json({ response: responseText })
 
   } catch (error: any) {
-    console.error('Erro no chat:', error)
+    console.error('Erro no chat:', error.message || error)
     
-    // Retornar mensagem amigável mesmo com erro
     return NextResponse.json({ 
-      response: 'Desculpe, tive um problema ao processar sua mensagem. Pode tentar novamente? 💜' 
+      response: 'Desculpe, tive um probleminha. Pode tentar de novo? 💜' 
     })
   }
 }
 
-function buildSystemPrompt(
-  name: string, 
-  phase: string, 
-  gestationWeek?: number,
-  restrictions: string[] = []
-): string {
-  let prompt = `
-Você é a Vita, assistente virtual de nutrição e bem-estar do app VitaFit.
+function buildPrompt(name: string, phase: string, gestationWeek?: number): string {
+  let prompt = `Você é a Vita, assistente virtual de nutrição e bem-estar do app VitaFit.
 
-# SUA PERSONALIDADE
-- Carinhosa, acolhedora e empática como uma amiga próxima
-- Fala de forma natural e descontraída, nunca robótica
+PERSONALIDADE:
+- Carinhosa, acolhedora e empática
+- Fala de forma natural, nunca robótica
 - Usa emojis com moderação (1-2 por mensagem)
-- Celebra conquistas e oferece apoio em dificuldades
-- Explica termos técnicos de forma simples
+- Celebra conquistas da usuária
 
-# REGRAS
-- Responda de forma concisa (máximo 3 parágrafos)
-- Personalize SEMPRE usando o nome dela
-- Para questões médicas específicas, sugira consultar profissional
-- Seja prática e dê dicas úteis
+REGRAS:
+- Responda de forma concisa (máximo 3 parágrafos curtos)
+- Personalize usando o nome dela: ${name}
+- Para questões médicas, sugira consultar profissional
+- Seja prática com dicas úteis
 
-# SOBRE A USUÁRIA
+CONTEXTO:
 Nome: ${name}
 `
 
   if (phase === 'PREGNANT' && gestationWeek) {
     const trimester = gestationWeek <= 13 ? '1º trimestre' : gestationWeek <= 26 ? '2º trimestre' : '3º trimestre'
-    prompt += `
-Fase: Gestante 🤰
-Semana: ${gestationWeek}ª semana (${trimester})
+    prompt += `Fase: GESTANTE 🤰 (${gestationWeek}ª semana - ${trimester})
 
-DIRETRIZES PARA GESTANTES:
-- Verifique se alimentos são seguros para gravidez
-- Nutrientes importantes: ácido fólico, ferro, cálcio, ômega-3
-- Alimentos proibidos: peixes crus, carnes mal passadas, queijos não pasteurizados, álcool
-- Adapte exercícios ao trimestre
+IMPORTANTE PARA GESTANTES:
+- Alimentos seguros para gravidez
+- Nutrientes: ácido fólico, ferro, cálcio
+- EVITAR: peixes crus, carnes mal passadas, álcool
 `
   } else if (phase === 'POSTPARTUM') {
-    prompt += `
-Fase: Pós-parto 🤱
-- Se amamentando, considere ~500kcal extras
-- Priorize recuperação e descanso
+    prompt += `Fase: PÓS-PARTO 🤱
+- Priorize recuperação
+- Se amamentando, +500kcal/dia
 `
   } else {
-    prompt += `
-Fase: Ativa e saudável 💪
-- Foque em alimentação equilibrada
-- Incentive atividade física regular
+    prompt += `Fase: Ativa e saudável 💪
 `
-  }
-
-  if (restrictions.length > 0) {
-    prompt += `\nRestrições alimentares: ${restrictions.join(', ')}\n`
   }
 
   prompt += `
-# ÁREAS DE EXPERTISE
-- Nutrição e alimentação saudável
+EXPERTISE:
+- Nutrição e alimentação
 - Exercícios e bem-estar
-- Receitas e dicas culinárias
-- Saúde materna (gestação e pós-parto)
+- Receitas saudáveis
+- Saúde materna
 - Sono e autocuidado
 
-Agora responda a mensagem da ${name} de forma acolhedora e útil!
-`
+Responda de forma acolhedora e útil!`
 
   return prompt
 }
