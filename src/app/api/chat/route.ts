@@ -1,8 +1,60 @@
-// Versão: 29-01-2026-2100 - Com Serper e Gemini corrigido
+// Versão: 29-01-2026-v3 - Com múltiplos fallbacks de IA
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
 const SERPER_API_KEY = '2d09dbaf10aadee46c34bfa7bc41f507d75d707a'
+
+// Lista de provedores de IA para fallback
+const AI_PROVIDERS = [
+  {
+    name: 'Gemini',
+    url: (key: string) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+    key: () => process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    formatRequest: (prompt: string, history: any[]) => ({
+      contents: [
+        ...history.map((msg: any) => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }]
+        })),
+        { role: 'user', parts: [{ text: prompt }] }
+      ],
+      generationConfig: {
+        temperature: 0.8,
+        maxOutputTokens: 4096,
+        topP: 0.95,
+      },
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+      ],
+    }),
+    extractResponse: (data: any) => data.candidates?.[0]?.content?.parts?.[0]?.text || null,
+  },
+  {
+    name: 'OpenRouter-Llama',
+    url: () => 'https://openrouter.ai/api/v1/chat/completions',
+    key: () => process.env.OPENROUTER_API_KEY,
+    headers: (key: string) => ({
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://vita-fit-nutricao.vercel.app',
+      'X-Title': 'VitaFit'
+    }),
+    formatRequest: (prompt: string, history: any[]) => ({
+      model: 'meta-llama/llama-3.2-3b-instruct:free',
+      messages: [
+        { role: 'system', content: prompt.split('\n\nMensagem')[0] },
+        ...history.map((msg: any) => ({ role: msg.role, content: msg.content })),
+        { role: 'user', content: prompt.split('\n\nMensagem da usuária:')[1] || prompt }
+      ],
+      max_tokens: 2048,
+      temperature: 0.8,
+    }),
+    extractResponse: (data: any) => data.choices?.[0]?.message?.content || null,
+  }
+]
 
 export async function POST(request: Request) {
   try {
@@ -10,19 +62,6 @@ export async function POST(request: Request) {
 
     if (!message) {
       return NextResponse.json({ error: 'Mensagem é obrigatória' }, { status: 400 })
-    }
-
-    // Verificar todas as possíveis variáveis de ambiente para Gemini
-    const apiKey = process.env.GEMINI_API_KEY 
-      || process.env.GOOGLE_GENERATIVE_AI_API_KEY 
-      || process.env.NEXT_PUBLIC_GEMINI_API_KEY
-      || 'AIzaSyCW53fh-d-vLU1W1c1f31iDzxPoroPlLe8' // Fallback
-
-    if (!apiKey) {
-      console.error('❌ Nenhuma API key encontrada!')
-      return NextResponse.json({ 
-        response: 'Olá! Estou com um probleminha técnico no momento. Por favor, tente novamente em alguns minutos! 💜' 
-      })
     }
 
     // Buscar contexto do usuário
@@ -65,7 +104,7 @@ export async function POST(request: Request) {
       try {
         const searchResults = await searchWithSerper(message)
         if (searchResults) {
-          searchContext = `\n\nINFORMAÇÕES ATUALIZADAS DA PESQUISA:\n${searchResults}`
+          searchContext = `\n\nINFORMAÇÕES ATUALIZADAS DA PESQUISA (use essas informações para responder, SEMPRE cite as fontes):\n${searchResults}`
         }
       } catch (searchError) {
         console.warn('Erro na pesquisa web:', searchError)
@@ -73,79 +112,83 @@ export async function POST(request: Request) {
     }
 
     // Construir prompt
-    const systemPrompt = buildPrompt(userName, userPhase, gestationWeek, searchContext)
+    const fullPrompt = buildPrompt(userName, userPhase, gestationWeek, searchContext, message)
 
-    // Chamar API Gemini diretamente via fetch
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            { role: 'user', parts: [{ text: systemPrompt }] },
-            { role: 'model', parts: [{ text: 'Entendido! Sou a Vita, sua assistente de nutrição e bem-estar. Estou pronta para ajudar! 💜' }] },
-            ...history.map((msg: { role: string; content: string }) => ({
-              role: msg.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: msg.content }]
-            })),
-            { role: 'user', parts: [{ text: message }] }
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 2048, // Aumentado para não truncar
-          },
-          safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-          ]
-        })
+    // Tentar cada provedor de IA
+    for (const provider of AI_PROVIDERS) {
+      const apiKey = provider.key()
+      if (!apiKey) {
+        console.log(`⏭️ ${provider.name}: sem API key configurada`)
+        continue
       }
-    )
 
-    if (!geminiResponse.ok) {
-      const errorText = await geminiResponse.text()
-      console.error('Erro Gemini:', geminiResponse.status, errorText)
-      throw new Error(`Gemini API error: ${geminiResponse.status}`)
+      try {
+        console.log(`🤖 Tentando ${provider.name}...`)
+        
+        const headers: Record<string, string> = provider.headers 
+          ? provider.headers(apiKey) 
+          : { 'Content-Type': 'application/json' }
+
+        const url = typeof provider.url === 'function' 
+          ? provider.url(apiKey) 
+          : provider.url
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(provider.formatRequest(fullPrompt, history)),
+        })
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.warn(`❌ ${provider.name} erro ${response.status}:`, errorText.substring(0, 200))
+          continue
+        }
+
+        const data = await response.json()
+        const responseText = provider.extractResponse(data)
+
+        if (responseText) {
+          console.log(`✅ ${provider.name} respondeu com sucesso!`)
+          return NextResponse.json({ response: responseText })
+        }
+      } catch (providerError) {
+        console.warn(`❌ ${provider.name} falhou:`, providerError)
+      }
     }
 
-    const geminiData = await geminiResponse.json()
-    
-    const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text 
-      || 'Desculpe, não consegui gerar uma resposta. Pode reformular sua pergunta? 💜'
+    // Se nenhum provedor funcionou, usar resposta inteligente local
+    console.log('⚠️ Todos os provedores falharam, usando resposta local')
+    const localResponse = generateLocalResponse(message, userName, userPhase, gestationWeek, searchContext)
+    return NextResponse.json({ response: localResponse })
 
-    return NextResponse.json({ response: responseText })
-
-  } catch (error: any) {
-    console.error('Erro no chat:', error.message || error)
-    
-    return NextResponse.json({ 
-      response: 'Desculpe, tive um probleminha. Pode tentar de novo? 💜' 
+  } catch (error) {
+    console.error('Erro no chat:', error)
+    return NextResponse.json({
+      response: 'Desculpe, estou com dificuldades técnicas no momento. Mas você pode me perguntar novamente! 💜'
     })
   }
 }
 
 function shouldSearchWeb(message: string): boolean {
   const searchKeywords = [
-    'pesquise', 'pesquisar', 'busque', 'buscar', 'procure', 'procurar',
-    'atual', 'atualizado', 'recente', 'novidade', 'notícia', 'notícias',
-    'artigo', 'estudo', 'pesquisa', 'fonte', 'referência',
-    'o que é', 'como funciona', 'benefícios', 'malefícios',
-    'receita', 'receitas'
+    'pesquisa', 'pesquisar', 'busca', 'buscar', 'procura', 'procurar',
+    'notícia', 'notícias', 'novidade', 'atualização', 'recente',
+    'hoje', 'ontem', 'semana', 'mês', 'ano',
+    'como fazer', 'receita de', 'o que é', 'qual', 'quais',
+    'dicas', 'sugestões', 'recomendações', 'melhores',
+    'gravidez', 'gestação', 'bebê', 'maternidade',
+    'nutrição', 'alimentação', 'dieta', 'exercício',
+    'sintoma', 'sintomas', 'pode', 'posso'
   ]
   
   const lowerMessage = message.toLowerCase()
-  return searchKeywords.some(keyword => lowerMessage.includes(keyword))
+  return searchKeywords.some(keyword => lowerMessage.includes(keyword)) || message.includes('?')
 }
 
 async function searchWithSerper(query: string): Promise<string | null> {
   try {
-    // Adicionar contexto brasileiro à busca
-    const searchQuery = `${query} site:br OR ${query} brasil português`
+    const searchQuery = `${query} maternidade gestação gravidez Brasil`
     
     const response = await fetch('https://google.serper.dev/search', {
       method: 'POST',
@@ -162,93 +205,179 @@ async function searchWithSerper(query: string): Promise<string | null> {
     })
 
     if (!response.ok) {
-      throw new Error(`Serper API error: ${response.status}`)
+      console.warn('Serper API error:', response.status)
+      return null
     }
 
     const data = await response.json()
     
-    // Formatar resultados
     let results = ''
     
+    // Knowledge Graph
+    if (data.knowledgeGraph) {
+      results += `📚 ${data.knowledgeGraph.title || ''}: ${data.knowledgeGraph.description || ''}\n`
+    }
+    
+    // Organic results
     if (data.organic && data.organic.length > 0) {
-      results += 'RESULTADOS DA PESQUISA:\n'
-      data.organic.slice(0, 5).forEach((item: any, index: number) => {
-        results += `\n${index + 1}. ${item.title}\n`
+      results += '\n📰 FONTES ENCONTRADAS:\n'
+      data.organic.slice(0, 4).forEach((item: any, index: number) => {
+        results += `\n${index + 1}. **${item.title}**\n`
         results += `   ${item.snippet}\n`
-        results += `   Fonte: ${item.link}\n`
+        results += `   🔗 Fonte: ${item.link}\n`
       })
     }
 
-    if (data.knowledgeGraph) {
-      results += `\nINFORMAÇÃO PRINCIPAL:\n${data.knowledgeGraph.description || ''}\n`
+    // People also ask
+    if (data.peopleAlsoAsk && data.peopleAlsoAsk.length > 0) {
+      results += '\n❓ PERGUNTAS RELACIONADAS:\n'
+      data.peopleAlsoAsk.slice(0, 2).forEach((item: any) => {
+        results += `- ${item.question}: ${item.snippet}\n`
+      })
     }
-
+    
     return results || null
   } catch (error) {
-    console.error('Erro Serper:', error)
+    console.error('Erro no Serper:', error)
     return null
   }
 }
 
-function buildPrompt(name: string, phase: string, gestationWeek?: number, searchContext?: string): string {
-  let prompt = `Você é a Vita, assistente virtual de nutrição e bem-estar do app VitaFit.
-
-PERSONALIDADE:
-- Carinhosa, acolhedora e empática
-- Fala de forma natural, nunca robótica
-- Usa emojis com moderação (1-2 por mensagem)
-- Celebra conquistas da usuária
-
-REGRAS IMPORTANTES:
-- NUNCA truncar respostas - sempre complete seu raciocínio
-- Responda de forma completa mas organizada
-- Personalize usando o nome dela: ${name}
-- Para questões médicas, sugira consultar profissional
-- Seja prática com dicas úteis
-- TODO conteúdo deve ser em PORTUGUÊS DO BRASIL
-- Quando houver pesquisa, SEMPRE cite as fontes
-
-CONTEXTO:
-Nome: ${name}
-`
-
-  if (phase === 'PREGNANT' && gestationWeek) {
-    const trimester = gestationWeek <= 13 ? '1º trimestre' : gestationWeek <= 26 ? '2º trimestre' : '3º trimestre'
-    prompt += `Fase: GESTANTE 🤰 (${gestationWeek}ª semana - ${trimester})
-
-IMPORTANTE PARA GESTANTES:
-- Alimentos seguros para gravidez
-- Nutrientes: ácido fólico, ferro, cálcio
-- EVITAR: peixes crus, carnes mal passadas, álcool
-`
-  } else if (phase === 'POSTPARTUM') {
-    prompt += `Fase: PÓS-PARTO 🤱
-- Priorize recuperação
-- Se amamentando, +500kcal/dia
-`
-  } else {
-    prompt += `Fase: Ativa e saudável 💪
-`
+function buildPrompt(
+  userName: string, 
+  userPhase: string, 
+  gestationWeek: number | undefined,
+  searchContext: string,
+  userMessage: string
+): string {
+  const phaseContext = {
+    'TRYING': 'Ela está tentando engravidar. Foque em fertilidade, ovulação, preparação para gravidez.',
+    'PREGNANT': gestationWeek 
+      ? `Ela está grávida de ${gestationWeek} semanas. Dê informações específicas para esse período gestacional.`
+      : 'Ela está grávida. Pergunte de quantas semanas está para dar orientações mais específicas.',
+    'POSTPARTUM': 'Ela está no pós-parto. Foque em recuperação, amamentação, cuidados com o bebê e autocuidado.',
+    'ACTIVE': 'Foque em saúde feminina geral, bem-estar e estilo de vida saudável.'
   }
 
+  return `Você é a Vita, assistente de bem-estar materno do app VitaFit. Você é carinhosa, acolhedora e MUITO conhecedora sobre saúde materna, nutrição e bem-estar.
+
+CONTEXTO DA USUÁRIA:
+- Nome: ${userName}
+- Fase: ${phaseContext[userPhase as keyof typeof phaseContext] || phaseContext['ACTIVE']}
+
+DIRETRIZES:
+1. Seja calorosa e empática, use emojis moderadamente
+2. Dê respostas COMPLETAS e ÚTEIS, nunca truncadas
+3. Sempre baseie suas respostas em informações confiáveis
+4. Para questões médicas sérias, recomende consultar um profissional de saúde
+5. Use linguagem simples e acessível
+6. Se houver informações da pesquisa web, USE-AS e CITE AS FONTES
+7. Responda SEMPRE em português brasileiro
+8. Não seja genérica - dê dicas práticas e específicas
+${searchContext}
+
+Mensagem da usuária: ${userMessage}`
+}
+
+function generateLocalResponse(
+  message: string, 
+  userName: string, 
+  userPhase: string, 
+  gestationWeek: number | undefined,
+  searchContext: string
+): string {
+  const lowerMessage = message.toLowerCase()
+  
+  // Saudações
+  if (lowerMessage.match(/^(oi|olá|ola|hey|eai|e ai|bom dia|boa tarde|boa noite)/)) {
+    return `Olá, ${userName}! 💜 Que bom te ver por aqui! Como posso te ajudar hoje? Posso falar sobre nutrição, exercícios, dicas de bem-estar ou qualquer dúvida que você tenha!`
+  }
+  
+  // Alimentação
+  if (lowerMessage.match(/(comer|alimentação|comida|alimento|dieta|nutrição|refeição|café|almoço|jantar|lanche)/)) {
+    if (userPhase === 'PREGNANT') {
+      return `${userName}, durante a gestação${gestationWeek ? ` (você está com ${gestationWeek} semanas! 🤰)` : ''}, alguns alimentos são super importantes:
+
+🥬 **Ácido fólico**: vegetais verde-escuros, feijão, lentilha
+🥛 **Cálcio**: leite, iogurte, queijos, tofu
+🥩 **Ferro**: carnes magras, feijão, folhas escuras
+🐟 **Ômega-3**: peixes como sardinha e salmão (bem cozidos!)
+💧 **Hidratação**: pelo menos 2 litros de água por dia
+
+Evite: álcool, peixes crus, queijos não pasteurizados, cafeína em excesso.
+
+Quer que eu monte um cardápio personalizado para você? 💜`
+    }
+    return `${userName}, para uma alimentação saudável, foque em:
+
+🥗 **Variedade**: inclua todas as cores no prato
+🥬 **Vegetais**: pelo menos 5 porções por dia
+🍎 **Frutas**: 3 porções diárias
+💧 **Água**: 2 litros por dia
+🥩 **Proteínas**: varie entre carnes, ovos, leguminosas
+
+Quer dicas específicas para alguma refeição? 💜`
+  }
+  
+  // Exercícios
+  if (lowerMessage.match(/(exercício|treino|academia|atividade física|yoga|pilates|caminhada)/)) {
+    if (userPhase === 'PREGNANT') {
+      return `${userName}, exercícios na gravidez são ótimos quando feitos com segurança! 🧘‍♀️
+
+✅ **Recomendados**:
+- Caminhada leve (20-30 min)
+- Natação e hidroginástica
+- Yoga pré-natal
+- Pilates adaptado
+- Alongamentos suaves
+
+⚠️ **Evite**:
+- Exercícios de alto impacto
+- Esportes de contato
+- Posições deitada de barriga pra cima após 16 semanas
+- Exercícios extenuantes
+
+Sempre com liberação médica! Quer uma rotina suave para começar? 💪`
+    }
+    return `Atividade física é essencial, ${userName}! 💪
+
+Recomendo começar com:
+- 🚶‍♀️ 30 min de caminhada diária
+- 🧘‍♀️ Yoga ou pilates 2-3x por semana
+- 💪 Musculação leve 2-3x por semana
+- 🏊‍♀️ Natação se possível
+
+O importante é encontrar algo que você goste! Posso sugerir um plano de treino? 💜`
+  }
+  
+  // Sintomas gravidez
+  if (lowerMessage.match(/(enjoo|náusea|azia|dor|cólica|inchaço|cansaço|insônia|sono)/)) {
+    return `Entendo como é desconfortável, ${userName}. 💜
+
+Algumas dicas que podem ajudar:
+🍋 Para enjoos: gengibre, limão, comer pequenas porções
+🛏️ Para cansaço: descanso, alimentação leve, cochilos
+💧 Para inchaço: elevar as pernas, reduzir sal
+🌙 Para insônia: rotina de sono, chás relaxantes (sem cafeína)
+
+Se os sintomas forem intensos ou persistentes, é importante conversar com seu médico! 
+
+Quer mais detalhes sobre algum sintoma específico?`
+  }
+  
+  // Resposta genérica mas útil
   if (searchContext) {
-    prompt += `\n${searchContext}\n
-INSTRUÇÕES SOBRE A PESQUISA:
-- Use essas informações para enriquecer sua resposta
-- SEMPRE mencione as fontes quando usar informações da pesquisa
-- Priorize informações de fontes brasileiras e confiáveis
-`
+    return `${userName}, baseado nas informações que encontrei:\n\n${searchContext}\n\nPosso ajudar com mais alguma coisa? 💜`
   }
+  
+  return `Oi ${userName}! 💜 Não consegui buscar informações atualizadas no momento, mas estou aqui para ajudar! 
 
-  prompt += `
-EXPERTISE:
-- Nutrição e alimentação
-- Exercícios e bem-estar
-- Receitas saudáveis
-- Saúde materna
-- Sono e autocuidado
+Posso falar sobre:
+🍎 Nutrição e alimentação
+🏃‍♀️ Exercícios e bem-estar
+🤰 Dúvidas sobre gravidez
+👶 Cuidados pós-parto
+📚 Dicas gerais de saúde
 
-Responda de forma acolhedora, completa e útil!`
-
-  return prompt
+O que você gostaria de saber?`
 }
