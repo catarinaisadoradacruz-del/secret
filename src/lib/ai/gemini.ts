@@ -1,9 +1,17 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY!)
+// Usar a chave de API com fallback
+const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || ''
 
+if (!apiKey) {
+  console.warn('⚠️ GOOGLE_GENERATIVE_AI_API_KEY não configurada!')
+}
+
+const genAI = new GoogleGenerativeAI(apiKey)
+
+// Usar modelo estável
 export const chatModel = genAI.getGenerativeModel({
-  model: 'gemini-2.0-flash-exp',
+  model: 'gemini-1.5-flash',
 })
 
 export const embeddingModel = genAI.getGenerativeModel({
@@ -26,19 +34,19 @@ export async function analyzeMealImage(
   const isPregnant = userContext.phase === 'PREGNANT'
 
   const prompt = `
-Analise esta imagem de refeicao e forneca informacoes nutricionais.
+Analise esta imagem de refeição e forneça informações nutricionais.
 
 ${isPregnant ? `
-ATENCAO: A usuaria e GESTANTE na ${userContext.gestationWeek}a semana.
-Verifique se algum alimento e contraindicado para gestantes.
-Alimentos proibidos: peixes crus, carnes mal passadas, queijos nao pasteurizados, embutidos, alcool.
+ATENÇÃO: A usuária é GESTANTE na ${userContext.gestationWeek}ª semana.
+Verifique se algum alimento é contraindicado para gestantes.
+Alimentos proibidos: peixes crus, carnes mal passadas, queijos não pasteurizados, embutidos, álcool.
 ` : ''}
 
-${userContext.restrictions.length > 0 ? `Restricoes alimentares: ${userContext.restrictions.join(', ')}` : ''}
+${userContext.restrictions.length > 0 ? `Restrições alimentares: ${userContext.restrictions.join(', ')}` : ''}
 
-Retorne APENAS JSON valido (sem markdown):
+Retorne APENAS JSON válido (sem markdown):
 {
-  "foods": [{"name": "nome", "portion": "porcao", "calories": 0, "protein": 0, "carbs": 0, "fat": 0}],
+  "foods": [{"name": "nome", "portion": "porção", "calories": 0, "protein": 0, "carbs": 0, "fat": 0}],
   "totalCalories": 0,
   "totalProtein": 0,
   "totalCarbs": 0,
@@ -74,27 +82,27 @@ PERFIL:
 - Fase: ${userProfile.phase}
 ${userProfile.phase === 'PREGNANT' ? `- Semana: ${userProfile.gestationWeek}` : ''}
 - Objetivos: ${userProfile.goals.join(', ')}
-- Nivel: ${userProfile.exerciseLevel}
+- Nível: ${userProfile.exerciseLevel}
 
 ${userProfile.phase === 'PREGNANT' ? `
 REGRAS PARA GESTANTES:
-- Evitar exercicios deitada de costas apos 1o trimestre
+- Evitar exercícios deitada de costas após 1º trimestre
 - Sem alto impacto
-- Incluir assoalho pelvico
-- Frequencia cardiaca moderada
+- Incluir assoalho pélvico
+- Frequência cardíaca moderada
 ` : ''}
 
 Retorne APENAS JSON:
 {
   "name": "Nome do plano",
-  "description": "Descricao",
+  "description": "Descrição",
   "sessions": [
     {
       "day": "Segunda",
       "focus": "Foco",
       "duration": 30,
       "exercises": [
-        {"name": "Exercicio", "sets": 3, "reps": 12, "rest": 60, "notes": ""}
+        {"name": "Exercício", "sets": 3, "reps": 12, "rest": 60, "notes": ""}
       ]
     }
   ]
@@ -115,28 +123,28 @@ export async function generateMealPlan(userProfile: {
   isBreastfeeding?: boolean
 }) {
   const prompt = `
-Crie um plano alimentar semanal personalizado.
+Crie um plano alimentar semanal personalizado completo.
 
 PERFIL:
 - Nome: ${userProfile.name}
 - Fase: ${userProfile.phase}
-${userProfile.phase === 'PREGNANT' ? `- Semana: ${userProfile.gestationWeek}` : ''}
+${userProfile.phase === 'PREGNANT' ? `- Semana de gestação: ${userProfile.gestationWeek}` : ''}
 ${userProfile.isBreastfeeding ? '- Amamentando: Sim' : ''}
 - Objetivos: ${userProfile.goals.join(', ')}
-- Restricoes: ${userProfile.restrictions.length > 0 ? userProfile.restrictions.join(', ') : 'Nenhuma'}
+- Restrições: ${userProfile.restrictions.length > 0 ? userProfile.restrictions.join(', ') : 'Nenhuma'}
 
 ${userProfile.phase === 'PREGNANT' ? `
 REGRAS PARA GESTANTES:
-- Aumentar 300-500 kcal no 2o/3o trimestre
-- Priorizar: acido folico, ferro, calcio, omega-3
-- Evitar: peixes de alto mercurio, carnes cruas, alcool
+- Aumentar 300-500 kcal no 2º/3º trimestre
+- Priorizar: ácido fólico, ferro, cálcio, ômega-3
+- Evitar: peixes de alto mercúrio, carnes cruas, álcool
 ` : ''}
 
 ${userProfile.isBreastfeeding ? `
-REGRAS PARA AMAMENTACAO:
+REGRAS PARA AMAMENTAÇÃO:
 - Adicionar ~500 kcal
-- Manter hidratacao
-- Priorizar proteinas, calcio, ferro
+- Manter hidratação
+- Priorizar proteínas, cálcio, ferro
 ` : ''}
 
 Retorne APENAS JSON:
@@ -148,14 +156,15 @@ Retorne APENAS JSON:
   "meals": [
     {
       "day": "Segunda",
-      "breakfast": {"name": "descricao", "calories": 400},
-      "morningSnack": {"name": "descricao", "calories": 150},
-      "lunch": {"name": "descricao", "calories": 600},
-      "afternoonSnack": {"name": "descricao", "calories": 150},
-      "dinner": {"name": "descricao", "calories": 500}
+      "breakfast": {"name": "descrição detalhada", "calories": 400},
+      "morningSnack": {"name": "descrição", "calories": 150},
+      "lunch": {"name": "descrição detalhada", "calories": 600},
+      "afternoonSnack": {"name": "descrição", "calories": 150},
+      "dinner": {"name": "descrição detalhada", "calories": 500}
     }
   ],
-  "tips": ["dica 1", "dica 2"]
+  "tips": ["dica 1", "dica 2"],
+  "weeklyShoppingList": ["item 1", "item 2"]
 }
 `
 
@@ -169,19 +178,24 @@ export async function chatWithAssistant(
   systemPrompt: string,
   history: Array<{ role: string; content: string }>
 ) {
-  const chat = chatModel.startChat({
-    history: [
-      { role: 'user', parts: [{ text: 'Sistema: ' + systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Entendido! Estou pronta para ajudar.' }] },
-      ...history.map(msg => ({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: msg.content }]
-      }))
-    ],
-  })
+  try {
+    const chat = chatModel.startChat({
+      history: [
+        { role: 'user', parts: [{ text: 'Sistema: ' + systemPrompt }] },
+        { role: 'model', parts: [{ text: 'Entendido! Estou pronta para ajudar como sua assistente de nutrição e bem-estar.' }] },
+        ...history.map(msg => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }]
+        }))
+      ],
+    })
 
-  const result = await chat.sendMessage(message)
-  return result.response.text()
+    const result = await chat.sendMessage(message)
+    return result.response.text()
+  } catch (error) {
+    console.error('Erro no chatWithAssistant:', error)
+    throw error
+  }
 }
 
 export async function generateRecipe(
@@ -196,31 +210,31 @@ export async function generateRecipe(
   const isPregnant = userContext.phase === 'GESTANTE' || userContext.phase === 'PREGNANT'
 
   const mealTypeLabels: Record<string, string> = {
-    breakfast: 'cafe da manha',
-    lunch: 'almoco',
+    breakfast: 'café da manhã',
+    lunch: 'almoço',
     dinner: 'jantar',
     snack: 'lanche'
   }
 
   const prompt = `
-Crie uma receita saudavel para ${mealTypeLabels[mealType] || mealType}.
+Crie uma receita saudável para ${mealTypeLabels[mealType] || mealType}.
 
 ${isPregnant ? `
-ATENCAO: A usuaria e GESTANTE na ${userContext.gestationWeek || 20}a semana.
+ATENÇÃO: A usuária é GESTANTE na ${userContext.gestationWeek || 20}ª semana.
 A receita deve ser segura para gestantes:
 - Evitar peixes crus, carnes mal passadas
-- Evitar queijos nao pasteurizados
-- Priorizar nutrientes: acido folico, ferro, calcio
+- Evitar queijos não pasteurizados
+- Priorizar nutrientes: ácido fólico, ferro, cálcio
 ` : ''}
 
-${userContext.restrictions.length > 0 ? `Restricoes alimentares: ${userContext.restrictions.join(', ')}` : ''}
+${userContext.restrictions.length > 0 ? `Restrições alimentares: ${userContext.restrictions.join(', ')}` : ''}
 
-${availableIngredients ? `Ingredientes disponiveis: ${availableIngredients}` : ''}
+${availableIngredients ? `Ingredientes disponíveis: ${availableIngredients}` : ''}
 
-Retorne APENAS JSON valido (sem markdown):
+Retorne APENAS JSON válido (sem markdown):
 {
   "name": "Nome da receita",
-  "description": "Descricao breve",
+  "description": "Descrição breve",
   "difficulty": "easy|medium|hard",
   "prep_time": 15,
   "cook_time": 30,
@@ -252,10 +266,10 @@ export async function generateBabyNames(
   const genderLabel = gender === 'male' ? 'masculino' : gender === 'female' ? 'feminino' : 'neutro'
 
   const prompt = `
-Gere ${count} sugestoes de nomes de bebe com genero ${genderLabel}.
-Estilo preferido: ${style || 'classico e moderno'}
+Gere ${count} sugestões de nomes de bebê com gênero ${genderLabel}.
+Estilo preferido: ${style || 'clássico e moderno'}
 
-Retorne APENAS JSON valido:
+Retorne APENAS JSON válido:
 {
   "names": [
     {
