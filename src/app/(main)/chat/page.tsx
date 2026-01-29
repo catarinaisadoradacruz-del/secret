@@ -1,429 +1,278 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Loader2, Sparkles, ArrowLeft, MessageSquare, Plus, Trash2, Menu, History } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { ArrowLeft, Send, Sparkles, Loader2, Menu, Plus, MessageCircle, X } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
 interface Message {
+  id: string
   role: 'user' | 'assistant'
   content: string
+  created_at: string
 }
 
 interface ChatSession {
   id: string
   title: string
-  created_at: string
   updated_at: string
-  messages?: Message[]
 }
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [userName, setUserName] = useState('')
-  const [userId, setUserId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  const [currentSession, setCurrentSession] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(false)
-  const [loadingSessions, setLoadingSessions] = useState(true)
-  
-  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const shouldAutoScroll = useRef(true)
 
   useEffect(() => {
-    async function loadUser() {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        setUserId(user.id)
-        const { data } = await supabase
-          .from('users')
-          .select('name')
-          .eq('id', user.id)
-          .single()
-        if (data) setUserName(data.name)
-        loadSessions(user.id)
-      }
-    }
-    loadUser()
+    loadSessions()
   }, [])
 
-  const loadSessions = async (uid: string) => {
-    setLoadingSessions(true)
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const loadSessions = async () => {
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data } = await supabase
+        .from('chat_sessions')
+        .select('id, title, updated_at')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+        .limit(20)
+
+      if (data) setSessions(data)
+    } catch (e) { console.error(e) }
+  }
+
+  const loadMessages = async (sessionId: string) => {
     try {
       const supabase = createClient()
       const { data } = await supabase
-        .from('chat_sessions')
-        .select('id, title, created_at, updated_at, messages')
-        .eq('user_id', uid)
-        .order('updated_at', { ascending: false })
-        .limit(50)
+        .from('messages')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true })
 
-      setSessions(data || [])
-    } catch (err) {
-      console.error('Erro ao carregar sessões:', err)
-    } finally {
-      setLoadingSessions(false)
-    }
+      if (data) setMessages(data)
+      setCurrentSession(sessionId)
+      setShowSidebar(false)
+    } catch (e) { console.error(e) }
   }
 
-  // Scroll suave melhorado - não trava durante digitação
-  const scrollToBottom = useCallback((force = false) => {
-    if (!shouldAutoScroll.current && !force) return
-    
-    requestAnimationFrame(() => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
-      }
-    })
-  }, [])
-
-  // Detectar se usuário scrollou manualmente para cima
-  const handleScroll = useCallback(() => {
-    if (!messagesContainerRef.current) return
-    
-    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
-    shouldAutoScroll.current = isNearBottom
-  }, [])
-
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages, scrollToBottom])
-
   const createNewSession = async () => {
-    if (!userId) return null
-    
     try {
       const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
       const { data, error } = await supabase
         .from('chat_sessions')
-        .insert({ user_id: userId, title: 'Nova conversa', messages: [] })
+        .insert({ user_id: user.id, title: 'Nova conversa' })
         .select()
         .single()
 
-      if (error) throw error
-      
-      setSessions(prev => [data, ...prev])
-      setCurrentSessionId(data.id)
-      setMessages([])
-      setShowSidebar(false)
-      return data.id
-    } catch (err) {
-      console.error('Erro ao criar sessão:', err)
-      return null
-    }
-  }
-
-  const loadSession = (session: ChatSession) => {
-    setCurrentSessionId(session.id)
-    setMessages(session.messages || [])
-    setShowSidebar(false)
-    setTimeout(() => scrollToBottom(true), 100)
-  }
-
-  const updateSessionInDB = async (sessionId: string, newMessages: Message[], newTitle?: string) => {
-    try {
-      const supabase = createClient()
-      const updateData: any = {
-        messages: newMessages,
-        updated_at: new Date().toISOString()
-      }
-      if (newTitle) updateData.title = newTitle
-      
-      await supabase.from('chat_sessions').update(updateData).eq('id', sessionId)
-
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
-          ? { ...s, messages: newMessages, title: newTitle || s.title, updated_at: updateData.updated_at }
-          : s
-      ))
-    } catch (err) {
-      console.error('Erro ao atualizar sessão:', err)
-    }
-  }
-
-  const deleteSession = async (sessionId: string) => {
-    if (!confirm('Excluir esta conversa?')) return
-    
-    try {
-      const supabase = createClient()
-      await supabase.from('chat_sessions').delete().eq('id', sessionId)
-      
-      setSessions(prev => prev.filter(s => s.id !== sessionId))
-      if (currentSessionId === sessionId) {
-        setCurrentSessionId(null)
+      if (data) {
+        setCurrentSession(data.id)
         setMessages([])
+        setSessions(prev => [data, ...prev])
+        setShowSidebar(false)
       }
-    } catch (err) {
-      console.error('Erro ao excluir:', err)
-    }
+    } catch (e) { console.error(e) }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const sendMessage = async () => {
     if (!input.trim() || loading) return
 
     const userMessage = input.trim()
     setInput('')
-    shouldAutoScroll.current = true
-
-    // Criar sessão se não existir
-    let sessionId = currentSessionId
-    if (!sessionId) {
-      sessionId = await createNewSession()
-      if (!sessionId) return
-    }
-
-    const newMessages: Message[] = [...messages, { role: 'user', content: userMessage }]
-    setMessages(newMessages)
     setLoading(true)
 
+    const newUserMsg: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: userMessage,
+      created_at: new Date().toISOString()
+    }
+    setMessages(prev => [...prev, newUserMsg])
+
     try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not auth')
+
+      let sessionId = currentSession
+      if (!sessionId) {
+        const { data: newSession } = await supabase
+          .from('chat_sessions')
+          .insert({ user_id: user.id, title: userMessage.slice(0, 50) })
+          .select()
+          .single()
+        if (newSession) {
+          sessionId = newSession.id
+          setCurrentSession(sessionId)
+          setSessions(prev => [newSession, ...prev])
+        }
+      }
+
+      await supabase.from('messages').insert({
+        session_id: sessionId,
+        role: 'user',
+        content: userMessage
+      })
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: userMessage, 
-          history: messages.slice(-10) // Últimas 10 mensagens como contexto
-        }),
+        body: JSON.stringify({ message: userMessage, sessionId })
       })
 
       const data = await response.json()
       
-      const assistantMessage: Message = { 
-        role: 'assistant', 
-        content: data.response || 'Desculpe, não consegui processar sua mensagem.' 
+      const assistantMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: data.response || 'Desculpe, não consegui processar sua mensagem.',
+        created_at: new Date().toISOString()
       }
-      
-      const updatedMessages = [...newMessages, assistantMessage]
-      setMessages(updatedMessages)
+      setMessages(prev => [...prev, assistantMsg])
 
-      // Atualizar título se for primeira mensagem
-      const title = messages.length === 0 
-        ? userMessage.slice(0, 40) + (userMessage.length > 40 ? '...' : '')
-        : undefined
+      await supabase.from('messages').insert({
+        session_id: sessionId,
+        role: 'assistant',
+        content: assistantMsg.content
+      })
 
-      await updateSessionInDB(sessionId, updatedMessages, title)
-
-    } catch (error) {
-      console.error('Erro:', error)
-      setMessages([...newMessages, { 
-        role: 'assistant', 
-        content: 'Ops! Algo deu errado. Tente novamente! 💜' 
+    } catch (e) {
+      console.error(e)
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'Desculpe, ocorreu um erro. Tente novamente.',
+        created_at: new Date().toISOString()
       }])
     } finally {
       setLoading(false)
-      inputRef.current?.focus()
     }
   }
 
   return (
-    <div className="flex h-[100dvh] bg-background">
-      {/* Sidebar - Histórico */}
-      <AnimatePresence>
-        {showSidebar && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-              onClick={() => setShowSidebar(false)}
-            />
-            <motion.aside
-              initial={{ x: -300 }}
-              animate={{ x: 0 }}
-              exit={{ x: -300 }}
-              transition={{ type: 'spring', damping: 25 }}
-              className="fixed lg:relative left-0 top-0 h-full w-72 bg-white border-r border-gray-100 z-50 flex flex-col"
-            >
-              <div className="p-4 border-b border-gray-100">
-                <button
-                  onClick={createNewSession}
-                  className="w-full flex items-center justify-center gap-2 bg-primary-500 text-white py-3 rounded-xl font-medium hover:bg-primary-600 transition-colors"
-                >
-                  <Plus className="w-5 h-5" />
-                  Nova Conversa
-                </button>
-              </div>
+    <div className="flex h-screen bg-gray-50">
+      {/* Sidebar */}
+      <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-white border-r transform transition-transform ${showSidebar ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
+        <div className="flex flex-col h-full">
+          <div className="p-4 border-b flex items-center justify-between">
+            <h2 className="font-bold">Conversas</h2>
+            <button onClick={() => setShowSidebar(false)} className="md:hidden p-2">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          
+          <button onClick={createNewSession} className="m-3 flex items-center gap-2 p-3 bg-primary-500 text-white rounded-xl font-medium">
+            <Plus className="w-5 h-5" /> Nova Conversa
+          </button>
 
-              <div className="flex-1 overflow-y-auto p-2">
-                {loadingSessions ? (
-                  <div className="flex justify-center py-8">
-                    <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
-                  </div>
-                ) : sessions.length === 0 ? (
-                  <p className="text-center text-text-secondary py-8 text-sm">
-                    Nenhuma conversa ainda
-                  </p>
-                ) : (
-                  <div className="space-y-1">
-                    {sessions.map(session => (
-                      <div
-                        key={session.id}
-                        className={`group flex items-center gap-2 p-3 rounded-xl cursor-pointer transition-colors ${
-                          currentSessionId === session.id 
-                            ? 'bg-primary-50 text-primary-700' 
-                            : 'hover:bg-gray-50'
-                        }`}
-                        onClick={() => loadSession(session)}
-                      >
-                        <MessageSquare className="w-4 h-4 flex-shrink-0" />
-                        <span className="flex-1 truncate text-sm">{session.title}</span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteSession(session.id) }}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded text-red-500"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {sessions.map(s => (
+              <button
+                key={s.id}
+                onClick={() => loadMessages(s.id)}
+                className={`w-full text-left p-3 rounded-xl transition-colors ${currentSession === s.id ? 'bg-primary-50 text-primary-700' : 'hover:bg-gray-100'}`}
+              >
+                <div className="flex items-center gap-2">
+                  <MessageCircle className="w-4 h-4 flex-shrink-0" />
+                  <span className="truncate text-sm">{s.title}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
-      {/* Área Principal */}
+      {/* Overlay */}
+      {showSidebar && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowSidebar(false)} />}
+
+      {/* Main Chat */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="flex-shrink-0 bg-white border-b border-gray-100 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowSidebar(!showSidebar)}
-              className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
-            >
-              <History className="w-5 h-5 text-gray-600" />
-            </button>
-
-            <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
-              <ArrowLeft className="w-5 h-5 text-gray-600" />
-            </Link>
-
-            <div className="flex items-center gap-3 flex-1">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h1 className="font-semibold text-gray-900">Vita</h1>
-                <p className="text-xs text-gray-500">Sua assistente de bem-estar</p>
-              </div>
+        <header className="bg-white border-b px-4 py-3 flex items-center gap-3">
+          <button onClick={() => setShowSidebar(true)} className="p-2 hover:bg-gray-100 rounded-xl md:hidden">
+            <Menu className="w-5 h-5" />
+          </button>
+          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-white" />
             </div>
-
-            <button
-              onClick={createNewSession}
-              className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
-              title="Nova conversa"
-            >
-              <Plus className="w-5 h-5 text-gray-600" />
-            </button>
+            <div>
+              <h1 className="font-semibold text-sm">Vita AI</h1>
+              <p className="text-xs text-gray-500">Sua assistente</p>
+            </div>
           </div>
         </header>
 
-        {/* Mensagens */}
-        <div 
-          ref={messagesContainerRef}
-          onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-4 py-6 space-y-4 scroll-smooth"
-          style={{ overscrollBehavior: 'contain' }}
-        >
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center px-4">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mb-4">
-                <Sparkles className="w-10 h-10 text-white" />
-              </div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                Olá{userName ? `, ${userName}` : ''}! 💜
-              </h2>
-              <p className="text-gray-500 mb-6 max-w-sm">
-                Sou a Vita, sua assistente de bem-estar materno. Como posso te ajudar hoje?
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.length === 0 && (
+            <div className="text-center py-12">
+              <Sparkles className="w-12 h-12 mx-auto mb-4 text-primary-400" />
+              <h2 className="text-lg font-semibold mb-2">Olá! Sou a Vita 💜</h2>
+              <p className="text-gray-500 text-sm max-w-md mx-auto">
+                Sua assistente de nutrição e bem-estar. Pergunte sobre alimentação, exercícios, gestação ou qualquer dúvida!
               </p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {['Dicas de alimentação', 'Exercícios seguros', 'Sintomas da gravidez', 'Receitas saudáveis'].map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    onClick={() => setInput(suggestion)}
-                    className="px-4 py-2 bg-gray-100 hover:bg-primary-50 hover:text-primary-600 rounded-full text-sm transition-colors"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
+            </div>
+          )}
+
+          {messages.map(msg => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] p-3 rounded-2xl ${
+                msg.role === 'user'
+                  ? 'bg-primary-500 text-white rounded-br-md'
+                  : 'bg-white shadow-sm rounded-bl-md'
+              }`}>
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
               </div>
             </div>
-          ) : (
-            <>
-              {messages.map((message, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                      message.role === 'user'
-                        ? 'bg-primary-500 text-white rounded-br-md'
-                        : 'bg-gray-100 text-gray-800 rounded-bl-md'
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{message.content}</p>
-                  </div>
-                </motion.div>
-              ))}
-              
-              {loading && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="flex justify-start"
-                >
-                  <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
-                      <span className="text-sm text-gray-500">Pensando...</span>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-              
-              <div ref={messagesEndRef} className="h-1" />
-            </>
+          ))}
+
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-white shadow-sm p-3 rounded-2xl rounded-bl-md">
+                <Loader2 className="w-5 h-5 animate-spin text-primary-500" />
+              </div>
+            </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input */}
-        <div className="flex-shrink-0 border-t border-gray-100 bg-white p-4">
-          <form onSubmit={handleSubmit} className="flex gap-3">
+        <div className="p-4 bg-white border-t">
+          <div className="flex gap-2">
             <input
-              ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
               placeholder="Digite sua mensagem..."
-              className="flex-1 px-4 py-3 bg-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 transition-shadow"
-              disabled={loading}
+              className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
             <button
-              type="submit"
-              disabled={!input.trim() || loading}
-              className="px-4 py-3 bg-primary-500 text-white rounded-xl hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={sendMessage}
+              disabled={loading || !input.trim()}
+              className="px-4 py-3 bg-primary-500 text-white rounded-xl disabled:opacity-50"
             >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Send className="w-5 h-5" />
-              )}
+              <Send className="w-5 h-5" />
             </button>
-          </form>
+          </div>
         </div>
       </div>
     </div>
