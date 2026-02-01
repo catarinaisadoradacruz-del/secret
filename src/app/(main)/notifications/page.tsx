@@ -1,237 +1,167 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
 import { 
-  Bell, BellOff, ArrowLeft, Clock, Droplets, Dumbbell, 
-  Apple, Trophy, Calendar, Sparkles, Check, Moon, Sun,
-  Smartphone, AlertCircle, Settings
+  Bell, BellRing, Check, CheckCheck, Trash2, ArrowLeft, 
+  Clock, Trophy, Heart, Apple, Dumbbell, Calendar, 
+  MessageCircle, Baby, Droplets, Settings, Plus, X,
+  ChevronRight
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
-interface NotificationSettings {
-  water_reminder: boolean
-  workout_reminder: boolean
-  meal_reminder: boolean
-  achievement_alerts: boolean
-  appointment_reminder: boolean
-  tips_daily: boolean
-}
-
-interface Reminder {
+interface Notification {
   id: string
+  title: string
+  body: string
   type: string
-  label: string
-  time: string
-  enabled: boolean
-  days: number[]
+  read: boolean
+  data: any
+  created_at: string
 }
 
-const DEFAULT_REMINDERS: Reminder[] = [
-  { id: 'water-morning', type: 'water', label: 'Lembrete de água (manhã)', time: '08:00', enabled: true, days: [1,2,3,4,5,6,0] },
-  { id: 'water-afternoon', type: 'water', label: 'Lembrete de água (tarde)', time: '14:00', enabled: true, days: [1,2,3,4,5,6,0] },
-  { id: 'workout', type: 'workout', label: 'Hora do treino', time: '07:00', enabled: true, days: [1,2,3,4,5] },
-  { id: 'breakfast', type: 'meal', label: 'Café da manhã', time: '07:30', enabled: true, days: [1,2,3,4,5,6,0] },
-  { id: 'lunch', type: 'meal', label: 'Almoço', time: '12:00', enabled: true, days: [1,2,3,4,5,6,0] },
-  { id: 'dinner', type: 'meal', label: 'Jantar', time: '19:00', enabled: true, days: [1,2,3,4,5,6,0] },
-  { id: 'sleep', type: 'sleep', label: 'Hora de dormir', time: '22:00', enabled: false, days: [1,2,3,4,5,6,0] },
+interface ScheduledNotif {
+  id: string
+  title: string
+  body: string
+  type: string
+  scheduled_time: string
+  repeat_type: string
+  is_active: boolean
+}
+
+type Tab = 'todas' | 'lembretes'
+
+const typeConfig: Record<string, { icon: any; bg: string; color: string }> = {
+  achievement: { icon: Trophy, bg: 'bg-yellow-100', color: 'text-yellow-600' },
+  workout: { icon: Dumbbell, bg: 'bg-blue-100', color: 'text-blue-600' },
+  nutrition: { icon: Apple, bg: 'bg-green-100', color: 'text-green-600' },
+  water: { icon: Droplets, bg: 'bg-cyan-100', color: 'text-cyan-600' },
+  appointment: { icon: Calendar, bg: 'bg-purple-100', color: 'text-purple-600' },
+  baby: { icon: Baby, bg: 'bg-pink-100', color: 'text-pink-600' },
+  chat: { icon: MessageCircle, bg: 'bg-indigo-100', color: 'text-indigo-600' },
+  health: { icon: Heart, bg: 'bg-red-100', color: 'text-red-600' },
+  general: { icon: Bell, bg: 'bg-gray-100', color: 'text-gray-600' },
+  reminder: { icon: Clock, bg: 'bg-orange-100', color: 'text-orange-600' },
+}
+
+const QUICK_REMINDERS = [
+  { title: '💧 Hora de beber água', body: 'Mantenha-se hidratada! Beba um copo de água agora.', type: 'water', repeat: 'daily' },
+  { title: '🏋️ Hora do treino', body: 'Não esqueça da sua atividade física de hoje!', type: 'workout', repeat: 'daily' },
+  { title: '🍎 Registrar refeição', body: 'Registre o que comeu para acompanhar sua nutrição.', type: 'nutrition', repeat: 'daily' },
+  { title: '💊 Tomar vitaminas', body: 'Hora de tomar suas vitaminas e suplementos.', type: 'health', repeat: 'daily' },
+  { title: '📅 Consulta médica', body: 'Lembrete da sua consulta.', type: 'appointment', repeat: 'once' },
+  { title: '😴 Hora de dormir', body: 'Prepare-se para uma boa noite de sono.', type: 'health', repeat: 'daily' },
 ]
 
-const DAY_NAMES = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']
-
 export default function NotificationsPage() {
-  const [permission, setPermission] = useState<NotificationPermission>('default')
-  const [settings, setSettings] = useState<NotificationSettings>({
-    water_reminder: true,
-    workout_reminder: true,
-    meal_reminder: true,
-    achievement_alerts: true,
-    appointment_reminder: true,
-    tips_daily: true
-  })
-  const [reminders, setReminders] = useState<Reminder[]>(DEFAULT_REMINDERS)
+  const [tab, setTab] = useState<Tab>('todas')
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [scheduled, setScheduled] = useState<ScheduledNotif[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [showNewReminder, setShowNewReminder] = useState(false)
+  const [reminderTime, setReminderTime] = useState('08:00')
 
-  useEffect(() => {
-    checkPermission()
-    loadSettings()
-  }, [])
+  useEffect(() => { init() }, [])
 
-  const checkPermission = () => {
-    if ('Notification' in window) {
-      setPermission(Notification.permission)
-    }
+  const init = async () => {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setLoading(false); return }
+    setUserId(user.id)
+    await loadNotifications(user.id)
+    setLoading(false)
   }
 
-  const requestPermission = async () => {
-    if ('Notification' in window) {
-      const result = await Notification.requestPermission()
-      setPermission(result)
-      
-      if (result === 'granted') {
-        // Registrar service worker
-        if ('serviceWorker' in navigator) {
-          try {
-            await navigator.serviceWorker.register('/firebase-messaging-sw.js')
-            sendTestNotification()
-          } catch (e) {
-            console.error('Erro ao registrar SW:', e)
-          }
-        }
-      }
-    }
+  const loadNotifications = async (uid: string) => {
+    try {
+      const [notifRes, schedRes] = await Promise.all([
+        fetch(`/api/notifications?userId=${uid}&action=list`),
+        fetch(`/api/notifications?userId=${uid}&action=scheduled`)
+      ])
+      const notifData = await notifRes.json()
+      const schedData = await schedRes.json()
+      setNotifications(notifData.notifications || [])
+      setUnreadCount(notifData.unreadCount || 0)
+      setScheduled(schedData.scheduled || [])
+    } catch (e) { console.error(e) }
   }
 
-  const sendTestNotification = () => {
-    if (permission === 'granted') {
-      new Notification('🎉 VitaFit', {
-        body: 'Notificações ativadas com sucesso!',
-        icon: '/icons/icon-192.png',
-        badge: '/icons/icon-192.png'
+  const markAllRead = async () => {
+    if (!userId) return
+    await fetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, action: 'markRead' })
+    })
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    setUnreadCount(0)
+  }
+
+  const markRead = async (id: string) => {
+    if (!userId) return
+    await fetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, action: 'markRead', notificationId: id })
+    })
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
+    setUnreadCount(prev => Math.max(0, prev - 1))
+  }
+
+  const addReminder = async (reminder: typeof QUICK_REMINDERS[0]) => {
+    if (!userId) return
+    const today = new Date()
+    const [h, m] = reminderTime.split(':')
+    today.setHours(parseInt(h), parseInt(m), 0, 0)
+    if (today < new Date()) today.setDate(today.getDate() + 1)
+
+    await fetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        action: 'schedule',
+        title: reminder.title,
+        body: reminder.body,
+        type: reminder.type,
+        scheduledTime: today.toISOString(),
+        repeatType: reminder.repeat
       })
-    }
+    })
+
+    if (userId) await loadNotifications(userId)
+    setShowNewReminder(false)
   }
 
-  const loadSettings = async () => {
-    try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const { data } = await supabase
-        .from('notification_settings')
-        .select('*')
-        .eq('user_id', user.id)
-        .single()
-
-      if (data) {
-        setSettings({
-          water_reminder: data.water_reminder ?? true,
-          workout_reminder: data.workout_reminder ?? true,
-          meal_reminder: data.meal_reminder ?? true,
-          achievement_alerts: data.achievement_alerts ?? true,
-          appointment_reminder: data.appointment_reminder ?? true,
-          tips_daily: data.tips_daily ?? true
-        })
-      }
-
-      // Carregar lembretes personalizados
-      const { data: remindersData } = await supabase
-        .from('scheduled_notifications')
-        .select('*')
-        .eq('user_id', user.id)
-
-      if (remindersData && remindersData.length > 0) {
-        setReminders(remindersData.map(r => ({
-          id: r.id,
-          type: r.type,
-          label: r.label,
-          time: r.time,
-          enabled: r.enabled,
-          days: r.days || [1,2,3,4,5,6,0]
-        })))
-      }
-    } catch (e) {
-      console.error('Erro ao carregar configurações:', e)
-    } finally {
-      setLoading(false)
-    }
+  const deleteScheduled = async (id: string) => {
+    if (!userId) return
+    await fetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, action: 'deleteScheduled', scheduleId: id })
+    })
+    setScheduled(prev => prev.filter(s => s.id !== id))
   }
 
-  const saveSettings = async (newSettings: NotificationSettings) => {
-    setSaving(true)
-    try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      await supabase
-        .from('notification_settings')
-        .upsert({
-          user_id: user.id,
-          ...newSettings,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id' })
-
-      setSettings(newSettings)
-    } catch (e) {
-      console.error('Erro ao salvar:', e)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const toggleSetting = (key: keyof NotificationSettings) => {
-    const newSettings = { ...settings, [key]: !settings[key] }
-    saveSettings(newSettings)
-  }
-
-  const updateReminder = async (id: string, updates: Partial<Reminder>) => {
-    try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const reminder = reminders.find(r => r.id === id)
-      if (!reminder) return
-
-      const updatedReminder = { ...reminder, ...updates }
-
-      await supabase
-        .from('scheduled_notifications')
-        .upsert({
-          id: reminder.id.includes('-') ? undefined : reminder.id,
-          user_id: user.id,
-          type: updatedReminder.type,
-          label: updatedReminder.label,
-          time: updatedReminder.time,
-          enabled: updatedReminder.enabled,
-          days: updatedReminder.days
-        }, { onConflict: 'id' })
-
-      setReminders(prev => prev.map(r => r.id === id ? updatedReminder : r))
-    } catch (e) {
-      console.error('Erro ao atualizar lembrete:', e)
-    }
-  }
-
-  const toggleReminderDay = (reminderId: string, day: number) => {
-    const reminder = reminders.find(r => r.id === reminderId)
-    if (!reminder) return
-
-    const newDays = reminder.days.includes(day)
-      ? reminder.days.filter(d => d !== day)
-      : [...reminder.days, day]
-
-    updateReminder(reminderId, { days: newDays })
-  }
-
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'water': return Droplets
-      case 'workout': return Dumbbell
-      case 'meal': return Apple
-      case 'sleep': return Moon
-      default: return Bell
-    }
-  }
-
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'water': return 'text-blue-500 bg-blue-100'
-      case 'workout': return 'text-orange-500 bg-orange-100'
-      case 'meal': return 'text-green-500 bg-green-100'
-      case 'sleep': return 'text-purple-500 bg-purple-100'
-      default: return 'text-gray-500 bg-gray-100'
-    }
+  const timeAgo = (date: string) => {
+    const diff = Date.now() - new Date(date).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'Agora'
+    if (mins < 60) return `${mins}min`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours}h`
+    const days = Math.floor(hours / 24)
+    if (days < 7) return `${days}d`
+    return new Date(date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="w-10 h-10 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
@@ -239,176 +169,176 @@ export default function NotificationsPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       {/* Header */}
-      <header className="bg-white border-b border-gray-100 px-4 py-4 sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </Link>
-          <div>
-            <h1 className="text-xl font-bold">Notificações</h1>
-            <p className="text-sm text-gray-500">Gerencie seus lembretes</p>
+      <header className="bg-white border-b px-4 py-4 sticky top-0 z-20">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
+              <ArrowLeft className="w-5 h-5" />
+            </Link>
+            <div>
+              <h1 className="text-xl font-bold">Notificações</h1>
+              {unreadCount > 0 && (
+                <p className="text-xs text-primary-600">{unreadCount} não lida{unreadCount > 1 ? 's' : ''}</p>
+              )}
+            </div>
           </div>
+          <div className="flex gap-2">
+            {unreadCount > 0 && (
+              <button onClick={markAllRead} className="p-2 hover:bg-gray-100 rounded-xl text-primary-600" title="Marcar tudo como lido">
+                <CheckCheck className="w-5 h-5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-1">
+          <button
+            onClick={() => setTab('todas')}
+            className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${
+              tab === 'todas' ? 'bg-primary-50 text-primary-700' : 'text-gray-500'
+            }`}
+          >
+            <Bell className="w-4 h-4 inline mr-1" /> Todas
+          </button>
+          <button
+            onClick={() => setTab('lembretes')}
+            className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${
+              tab === 'lembretes' ? 'bg-primary-50 text-primary-700' : 'text-gray-500'
+            }`}
+          >
+            <Clock className="w-4 h-4 inline mr-1" /> Lembretes
+          </button>
         </div>
       </header>
 
-      <div className="p-4 space-y-4 max-w-2xl mx-auto">
-        {/* Status da Permissão */}
-        {permission !== 'granted' && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-yellow-50 border border-yellow-200 rounded-2xl p-4"
-          >
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-6 h-6 text-yellow-600 flex-shrink-0" />
-              <div className="flex-1">
-                <h3 className="font-semibold text-yellow-800">Ative as notificações</h3>
-                <p className="text-sm text-yellow-700 mt-1">
-                  Para receber lembretes, você precisa permitir notificações no navegador.
-                </p>
-                <button
-                  onClick={requestPermission}
-                  className="mt-3 bg-yellow-500 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-yellow-600"
-                >
-                  Permitir Notificações
-                </button>
+      <div className="p-4">
+        {tab === 'todas' && (
+          <div className="space-y-2">
+            {notifications.length === 0 ? (
+              <div className="text-center py-16">
+                <BellRing className="w-16 h-16 mx-auto mb-4 text-gray-200" />
+                <h3 className="font-semibold text-gray-600 mb-1">Tudo em dia!</h3>
+                <p className="text-sm text-gray-400">Suas notificações vão aparecer aqui</p>
               </div>
-            </div>
-          </motion.div>
+            ) : (
+              notifications.map(notif => {
+                const config = typeConfig[notif.type] || typeConfig.general
+                const Icon = config.icon
+                return (
+                  <div
+                    key={notif.id}
+                    onClick={() => !notif.read && markRead(notif.id)}
+                    className={`flex items-start gap-3 p-3 rounded-xl transition-all ${
+                      notif.read ? 'bg-white' : 'bg-primary-50/50 cursor-pointer'
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl ${config.bg} flex items-center justify-center flex-shrink-0`}>
+                      <Icon className={`w-5 h-5 ${config.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className={`text-sm ${notif.read ? 'font-medium' : 'font-bold'}`}>{notif.title}</h4>
+                        <span className="text-[10px] text-gray-400 whitespace-nowrap">{timeAgo(notif.created_at)}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">{notif.body}</p>
+                    </div>
+                    {!notif.read && <div className="w-2 h-2 bg-primary-500 rounded-full flex-shrink-0 mt-2" />}
+                  </div>
+                )
+              })
+            )}
+          </div>
         )}
 
-        {permission === 'granted' && (
-          <div className="bg-green-50 border border-green-200 rounded-2xl p-4 flex items-center gap-3">
-            <Check className="w-6 h-6 text-green-600" />
-            <div>
-              <h3 className="font-semibold text-green-800">Notificações ativas</h3>
-              <p className="text-sm text-green-700">Você receberá lembretes conforme configurado.</p>
-            </div>
-          </div>
-        )}
-
-        {/* Tipos de Notificação */}
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Settings className="w-5 h-5 text-gray-500" />
-              Tipos de Notificação
-            </h3>
-          </div>
-
-          <div className="divide-y divide-gray-100">
-            {[
-              { key: 'water_reminder', label: 'Lembretes de Água', icon: Droplets, color: 'text-blue-500' },
-              { key: 'workout_reminder', label: 'Lembretes de Treino', icon: Dumbbell, color: 'text-orange-500' },
-              { key: 'meal_reminder', label: 'Lembretes de Refeição', icon: Apple, color: 'text-green-500' },
-              { key: 'achievement_alerts', label: 'Alertas de Conquistas', icon: Trophy, color: 'text-yellow-500' },
-              { key: 'appointment_reminder', label: 'Lembretes de Consultas', icon: Calendar, color: 'text-purple-500' },
-              { key: 'tips_daily', label: 'Dicas Diárias', icon: Sparkles, color: 'text-pink-500' },
-            ].map(item => (
-              <div key={item.key} className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <item.icon className={`w-5 h-5 ${item.color}`} />
-                  <span className="font-medium">{item.label}</span>
-                </div>
-                <button
-                  onClick={() => toggleSetting(item.key as keyof NotificationSettings)}
-                  disabled={saving}
-                  className={`w-12 h-7 rounded-full transition-colors ${
-                    settings[item.key as keyof NotificationSettings]
-                      ? 'bg-primary-500'
-                      : 'bg-gray-300'
-                  }`}
-                >
-                  <motion.div
-                    className="w-5 h-5 bg-white rounded-full shadow-sm"
-                    animate={{ 
-                      x: settings[item.key as keyof NotificationSettings] ? 24 : 4 
-                    }}
-                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  />
-                </button>
+        {tab === 'lembretes' && (
+          <div className="space-y-4">
+            <button
+              onClick={() => setShowNewReminder(true)}
+              className="w-full flex items-center gap-3 p-4 bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-200 hover:border-primary-300 transition-all"
+            >
+              <div className="w-10 h-10 bg-primary-50 rounded-xl flex items-center justify-center">
+                <Plus className="w-5 h-5 text-primary-600" />
               </div>
-            ))}
-          </div>
-        </div>
+              <span className="font-medium text-gray-600">Novo Lembrete</span>
+            </button>
 
-        {/* Lembretes Personalizados */}
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Clock className="w-5 h-5 text-gray-500" />
-              Horários dos Lembretes
-            </h3>
-          </div>
-
-          <div className="divide-y divide-gray-100">
-            {reminders.map(reminder => {
-              const Icon = getTypeIcon(reminder.type)
-              const colorClass = getTypeColor(reminder.type)
-
-              return (
-                <div key={reminder.id} className="p-4">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorClass}`}>
-                      <Icon className="w-5 h-5" />
+            {scheduled.length === 0 ? (
+              <div className="text-center py-12">
+                <Clock className="w-12 h-12 mx-auto mb-3 text-gray-200" />
+                <p className="text-gray-500 mb-1">Nenhum lembrete ativo</p>
+                <p className="text-xs text-gray-400">Configure lembretes para não esquecer de nada</p>
+              </div>
+            ) : (
+              scheduled.map(sched => {
+                const config = typeConfig[sched.type] || typeConfig.reminder
+                const Icon = config.icon
+                return (
+                  <div key={sched.id} className="flex items-center gap-3 p-3 bg-white rounded-xl shadow-sm">
+                    <div className={`w-10 h-10 rounded-xl ${config.bg} flex items-center justify-center`}>
+                      <Icon className={`w-5 h-5 ${config.color}`} />
                     </div>
                     <div className="flex-1">
-                      <p className="font-medium">{reminder.label}</p>
-                      <input
-                        type="time"
-                        value={reminder.time}
-                        onChange={(e) => updateReminder(reminder.id, { time: e.target.value })}
-                        className="text-sm text-gray-500 bg-transparent"
-                      />
+                      <h4 className="font-semibold text-sm">{sched.title}</h4>
+                      <p className="text-xs text-gray-500">
+                        {sched.repeat_type === 'daily' ? 'Diário' : 
+                         sched.repeat_type === 'weekly' ? 'Semanal' : 'Uma vez'} •{' '}
+                        {new Date(sched.scheduled_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
                     </div>
-                    <button
-                      onClick={() => updateReminder(reminder.id, { enabled: !reminder.enabled })}
-                      className={`w-12 h-7 rounded-full transition-colors ${
-                        reminder.enabled ? 'bg-primary-500' : 'bg-gray-300'
-                      }`}
-                    >
-                      <motion.div
-                        className="w-5 h-5 bg-white rounded-full shadow-sm"
-                        animate={{ x: reminder.enabled ? 24 : 4 }}
-                        transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                      />
+                    <button onClick={() => deleteScheduled(sched.id)} className="p-2 text-gray-400 hover:text-red-500">
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-
-                  {reminder.enabled && (
-                    <div className="flex gap-1 ml-13">
-                      {DAY_NAMES.map((day, index) => (
-                        <button
-                          key={index}
-                          onClick={() => toggleReminderDay(reminder.id, index)}
-                          className={`w-8 h-8 rounded-full text-xs font-medium transition-colors ${
-                            reminder.days.includes(index)
-                              ? 'bg-primary-500 text-white'
-                              : 'bg-gray-100 text-gray-500'
-                          }`}
-                        >
-                          {day}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+                )
+              })
+            )}
           </div>
-        </div>
-
-        {/* Testar Notificação */}
-        {permission === 'granted' && (
-          <button
-            onClick={sendTestNotification}
-            className="w-full bg-white rounded-2xl p-4 shadow-sm flex items-center justify-center gap-2 text-primary-600 font-medium hover:bg-primary-50"
-          >
-            <Bell className="w-5 h-5" />
-            Enviar Notificação de Teste
-          </button>
         )}
       </div>
+
+      {/* New Reminder Modal */}
+      {showNewReminder && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50" onClick={() => setShowNewReminder(false)}>
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="font-bold text-lg">Novo Lembrete</h3>
+              <button onClick={() => setShowNewReminder(false)} className="p-2 hover:bg-gray-100 rounded-xl">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="mb-4">
+                <label className="text-sm font-medium text-gray-700 mb-2 block">Horário</label>
+                <input
+                  type="time"
+                  value={reminderTime}
+                  onChange={e => setReminderTime(e.target.value)}
+                  className="input"
+                />
+              </div>
+
+              <p className="text-sm font-medium text-gray-700 mb-3">Escolha um tipo:</p>
+              <div className="space-y-2">
+                {QUICK_REMINDERS.map((reminder, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => addReminder(reminder)}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl bg-gray-50 hover:bg-primary-50 transition-all text-left"
+                  >
+                    <span className="text-2xl">{reminder.title.split(' ')[0]}</span>
+                    <div className="flex-1">
+                      <p className="font-medium text-sm">{reminder.title.slice(reminder.title.indexOf(' ') + 1)}</p>
+                      <p className="text-xs text-gray-500">{reminder.repeat === 'daily' ? 'Repete diariamente' : 'Uma vez'}</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
