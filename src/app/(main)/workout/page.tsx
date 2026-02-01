@@ -252,9 +252,94 @@ const WORKOUTS: Workout[] = [
       { name: 'Hollow Hold', duration: 30, description: 'Corpo em forma de banana', tips: ['Não arqueie as costas'], muscle: 'Core completo' },
     ]
   },
+  // === PILATES ===
+  {
+    id: 'pilates-gestante', name: 'Pilates Gestante', description: 'Pilates adaptado para gestantes',
+    duration: 25, calories: 120, difficulty: 'Iniciante', category: 'Pilates', forPregnant: true,
+    color: 'from-rose-400 to-pink-500', icon: '🤸',
+    exercises: [
+      { name: 'Respiração Pilates', duration: 120, description: 'Inspire pelo nariz expandindo as costelas, expire contraindo o core', tips: ['Base de todo exercício de Pilates'] },
+      { name: 'Pelvic Curl', duration: 60, reps: 10, description: 'Deitada, eleve quadril vértebra por vértebra', tips: ['Movimento articulado', 'Aperte glúteos no topo'], muscle: 'Glúteos/Core' },
+      { name: 'Leg Circles', duration: 60, reps: 8, description: 'Deitada, faça círculos com a perna no ar', tips: ['Quadril estável', 'Movimentos pequenos'], muscle: 'Quadris' },
+      { name: 'Side Kicks', duration: 60, reps: 10, description: 'De lado, chute para frente e para trás', tips: ['Tronco firme', 'Não balance'], muscle: 'Coxas' },
+      { name: 'Swimming Modified', duration: 45, description: 'De quatro, estenda braço e perna opostos', tips: ['Core ativado o tempo todo'], muscle: 'Core/Costas' },
+      { name: 'Spine Stretch', duration: 90, description: 'Sentada, incline para frente arredondando', tips: ['Vértebra por vértebra', 'Excelente para coluna'] },
+      { name: 'Mermaid Stretch', duration: 90, description: 'Sentada, incline lateralmente', tips: ['Alonga as costelas', 'Ótimo para respiração'] },
+    ]
+  },
+  {
+    id: 'pilates-bola', name: 'Pilates com Bola', description: 'Exercícios com bola suíça para gestantes',
+    duration: 20, calories: 100, difficulty: 'Iniciante', category: 'Pilates', forPregnant: true,
+    color: 'from-fuchsia-400 to-pink-500', icon: '⚽',
+    exercises: [
+      { name: 'Bounce Suave', duration: 120, description: 'Sentada na bola, balance suavemente', tips: ['Relaxa a pélvis', 'Ótimo para o 3º trimestre'] },
+      { name: 'Rotação Pélvica', duration: 90, description: 'Na bola, faça círculos com o quadril', tips: ['Alivia tensão lombar', 'Ideal antes do parto'] },
+      { name: 'Wall Squat com Bola', duration: 60, reps: 12, description: 'Bola entre costas e parede, agache', tips: ['Joelhos não passam dos pés'], muscle: 'Pernas' },
+      { name: 'Chest Press na Bola', duration: 45, reps: 10, description: 'Costas na bola, pressione halteres leves', tips: ['Quadril alto', 'Ative o core'], muscle: 'Peito' },
+      { name: 'Ponte na Bola', duration: 45, reps: 10, description: 'Pés na bola, eleve o quadril', tips: ['Desafiador mas seguro'], muscle: 'Glúteos' },
+      { name: 'Relaxamento na Bola', duration: 120, description: 'Abrace a bola e relaxe sobre ela', tips: ['Posição restaurativa', 'Ótima para dor nas costas'] },
+    ]
+  },
+  // === KEGEL ===
+  {
+    id: 'kegel', name: 'Exercícios de Kegel', description: 'Fortalecimento do assoalho pélvico',
+    duration: 10, calories: 20, difficulty: 'Iniciante', category: 'Especial', forPregnant: true,
+    color: 'from-violet-400 to-purple-500', icon: '💎',
+    exercises: [
+      { name: 'Kegel Básico', duration: 120, description: 'Contraia os músculos do assoalho pélvico por 5 segundos, relaxe 5 segundos', tips: ['10 repetições', 'Não contraia abdômen ou coxas'] },
+      { name: 'Kegel Rápido', duration: 60, description: 'Contraia e relaxe rapidamente', tips: ['20 repetições rápidas', 'Desenvolve reflexo muscular'] },
+      { name: 'Elevador', duration: 90, description: 'Contraia gradualmente, como subindo andares de um elevador', tips: ['Suba 3 andares, desça 3', 'Controle fino dos músculos'] },
+      { name: 'Ponte com Kegel', duration: 60, reps: 10, description: 'Faça ponte e contraia assoalho pélvico no topo', tips: ['Combina fortalecimento'], muscle: 'Glúteos/Pélvico' },
+      { name: 'Kegel Sustentado', duration: 90, description: 'Contraia e mantenha por 10 segundos', tips: ['5 repetições', 'Respire normalmente durante'] },
+      { name: 'Relaxamento Pélvico', duration: 60, description: 'Relaxe completamente o assoalho pélvico', tips: ['Igualmente importante', 'Prepare-se para o parto'] },
+    ]
+  },
+  // === PÓS-PARTO ===
+  {
+    id: 'pos-parto-cardio', name: 'Cardio Pós-Parto', description: 'Retorno gradual à atividade cardiovascular',
+    duration: 20, calories: 130, difficulty: 'Iniciante', category: 'Cardio', forPregnant: false,
+    color: 'from-green-400 to-teal-500', icon: '🏃‍♀️',
+    exercises: [
+      { name: 'Marcha Suave', duration: 120, description: 'Caminhe no lugar com braços ativos', tips: ['Comece devagar', 'Ouça seu corpo'] },
+      { name: 'Step Touch', duration: 90, description: 'Passo lateral alternando', tips: ['Adicione braços', 'Ritmo confortável'] },
+      { name: 'Knee Lifts', duration: 60, description: 'Eleve os joelhos alternadamente', tips: ['Não force', 'Mantenha postura ereta'] },
+      { name: 'Skater Steps', duration: 60, description: 'Deslize lateralmente como patinando', tips: ['Baixo impacto', 'Trabalha equilíbrio'] },
+      { name: 'Box Step', duration: 90, description: 'Desenhe um quadrado com os passos', tips: ['Divertido e funcional'] },
+      { name: 'Marcha com Twist', duration: 60, description: 'Marche rotacionando o tronco', tips: ['Ativa os oblíquos'] },
+      { name: 'Cool Down Walk', duration: 120, description: 'Caminhe reduzindo o ritmo gradualmente', tips: ['Alongue ao final'] },
+    ]
+  },
+  {
+    id: 'pos-parto-recuperacao', name: 'Recuperação Pós-Parto', description: 'Exercícios gentis para recuperação após o parto',
+    duration: 15, calories: 50, difficulty: 'Iniciante', category: 'Especial', forPregnant: false,
+    color: 'from-emerald-400 to-green-500', icon: '🌱',
+    exercises: [
+      { name: 'Respiração Abdominal', duration: 120, description: 'Reative a conexão com seu core', tips: ['Inspire expandindo, expire contraindo suavemente', 'Sem pressa'] },
+      { name: 'Ativação Transverso', duration: 90, description: 'Contraia suavemente o abdômen profundo', tips: ['Não faça abdominal tradicional', 'Movimento sutil'] },
+      { name: 'Ponte Leve', duration: 60, reps: 8, description: 'Eleve o quadril com cuidado', tips: ['Apenas se confortável', 'Pare se sentir desconforto'], muscle: 'Glúteos' },
+      { name: 'Kegel de Recuperação', duration: 90, description: 'Reconecte com o assoalho pélvico', tips: ['Essencial após parto vaginal e cesárea'] },
+      { name: 'Alongamento de Peito', duration: 60, description: 'Abra os braços e estique o peito', tips: ['Alivia tensão da amamentação'] },
+      { name: 'Rotação de Pescoço', duration: 60, description: 'Gire a cabeça suavemente em círculos', tips: ['Alivia tensão de carregar o bebê'] },
+      { name: 'Savasana com Respiração', duration: 120, description: 'Deite e respire profundamente', tips: ['Você merece este descanso', 'Pratique o autocuidado'] },
+    ]
+  },
+  // === MEDITAÇÃO ATIVA ===
+  {
+    id: 'meditacao-ativa', name: 'Meditação em Movimento', description: 'Combine mindfulness com movimento suave',
+    duration: 15, calories: 40, difficulty: 'Iniciante', category: 'Yoga', forPregnant: true,
+    color: 'from-amber-400 to-yellow-500', icon: '🧘‍♀️',
+    exercises: [
+      { name: 'Aterramento', duration: 120, description: 'Em pé, sinta seus pés no chão. Respire 5 vezes profundamente', tips: ['Feche os olhos se confortável', 'Conecte-se com o momento'] },
+      { name: 'Movimentos Fluidos', duration: 120, description: 'Balance os braços suavemente como ondas', tips: ['Sem destino', 'Apenas sinta o movimento'] },
+      { name: 'Caminhada Consciente', duration: 120, description: 'Caminhe lentamente sentindo cada passo', tips: ['Atenção plena nos pés', 'Conte cada passo'] },
+      { name: 'Torção Sentada', duration: 90, description: 'Sente e gire suavemente para cada lado', tips: ['Respire na torção', 'Alivia tensão'] },
+      { name: 'Mãos no Coração', duration: 60, description: 'Mãos no peito, sinta os batimentos', tips: ['Conecte-se com seu corpo e seu bebê'] },
+      { name: 'Body Scan', duration: 180, description: 'Deitada, percorra cada parte do corpo mentalmente', tips: ['Da cabeça aos pés', 'Relaxe cada região'] },
+    ]
+  },
 ]
 
-const CATEGORIES = ['Todos', 'Gestante', 'Yoga', 'Full Body', 'Cardio', 'Força', 'Especial']
+const CATEGORIES = ['Todos', 'Gestante', 'Yoga', 'Pilates', 'Full Body', 'Cardio', 'Força', 'Especial']
 
 export default function WorkoutPage() {
   const [category, setCategory] = useState('Todos')
