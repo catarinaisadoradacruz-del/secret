@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { 
   Camera, X, RotateCcw, Check, AlertCircle, ArrowLeft, Search, Plus, Star,
   Info, ChevronRight, Loader2, Zap, ShieldCheck, ShieldAlert, Utensils, 
-  ScanLine, ImageIcon
+  ScanLine, ImageIcon, Flashlight, FlashlightOff
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -34,7 +34,7 @@ interface Product {
   ingredients?: string
 }
 
-// Extended local products database
+// Extended local products database (Brazilian products)
 const LOCAL_PRODUCTS: Record<string, Product> = {
   '7891000100103': {
     barcode: '7891000100103', name: 'Leite Integral', brand: 'Ninho',
@@ -52,13 +52,13 @@ const LOCAL_PRODUCTS: Record<string, Product> = {
     barcode: '7891000315507', name: 'Aveia Flocos', brand: 'Quaker',
     nutrition: { calories: 140, protein: 5, carbs: 25, fat: 3, fiber: 4 },
     serving: '40g', category: 'Cereais', isHealthy: true, score: 'A',
-    tips: ['Rica em fibras', 'Ajuda a controlar colesterol', 'Perfeita para o café da manhã']
+    tips: ['Rica em fibras', 'Ajuda a controlar colesterol']
   },
   '7894900011517': {
     barcode: '7894900011517', name: 'Coca-Cola', brand: 'Coca-Cola',
     nutrition: { calories: 139, protein: 0, carbs: 35, fat: 0, sugar: 35 },
     serving: '350ml', category: 'Bebidas', isHealthy: false, score: 'E',
-    warnings: ['Alto teor de açúcar', 'Contém cafeína - cuidado na gestação', 'Sem valor nutricional'],
+    warnings: ['Alto teor de açúcar', 'Contém cafeína - cuidado na gestação'],
     tips: ['Prefira água ou sucos naturais']
   },
   '7891150027374': {
@@ -71,20 +71,32 @@ const LOCAL_PRODUCTS: Record<string, Product> = {
     barcode: '7896004800011', name: 'Feijão Preto', brand: 'Camil',
     nutrition: { calories: 77, protein: 5, carbs: 14, fat: 0.5, fiber: 4, sodium: 1 },
     serving: '50g (seco)', category: 'Grãos', isHealthy: true, score: 'A',
-    tips: ['Rico em ferro e ácido fólico', 'Essencial na gestação', 'Combinar com vitamina C para melhor absorção']
+    tips: ['Rico em ferro e ácido fólico', 'Essencial na gestação']
   },
   '7891962047584': {
     barcode: '7891962047584', name: 'Sardinha em Óleo', brand: 'Coqueiro',
     nutrition: { calories: 142, protein: 15, carbs: 0, fat: 9, sodium: 380 },
     serving: '84g', category: 'Proteínas', isHealthy: true, score: 'A',
-    tips: ['Rica em ômega-3 (DHA)', 'Importante para desenvolvimento do bebê', 'Boa fonte de cálcio']
+    tips: ['Rica em ômega-3 (DHA)', 'Importante para o bebê']
   },
   '7622300862664': {
     barcode: '7622300862664', name: 'Biscoito Recheado', brand: 'Oreo',
     nutrition: { calories: 160, protein: 1, carbs: 25, fat: 7, sugar: 14 },
-    serving: '3 unidades (36g)', category: 'Snacks', isHealthy: false, score: 'E',
-    warnings: ['Alto em açúcar e gordura', 'Baixo valor nutricional', 'Contém gordura trans'],
-    tips: ['Consumir com moderação', 'Prefira frutas como lanche']
+    serving: '3 unidades', category: 'Snacks', isHealthy: false, score: 'E',
+    warnings: ['Alto em açúcar e gordura', 'Contém gordura trans'],
+    tips: ['Consumir com moderação']
+  },
+  '7891024135204': {
+    barcode: '7891024135204', name: 'Banana Passa', brand: 'Banana Brasil',
+    nutrition: { calories: 280, protein: 3, carbs: 65, fat: 0.5, fiber: 6 },
+    serving: '100g', category: 'Frutas Secas', isHealthy: true, score: 'B',
+    tips: ['Rica em potássio', 'Boa para câimbras na gestação']
+  },
+  '7891000305102': {
+    barcode: '7891000305102', name: 'Leite em Pó', brand: 'Ninho Fortificado',
+    nutrition: { calories: 130, protein: 7, carbs: 10, fat: 7 },
+    serving: '26g (2 colheres)', category: 'Laticínios', isHealthy: true, score: 'A',
+    tips: ['Fortificado com ferro e vitaminas', 'Ideal para gestantes']
   },
 }
 
@@ -97,163 +109,200 @@ export default function ScannerPage() {
   const [cameraError, setCameraError] = useState('')
   const [recentScans, setRecentScans] = useState<Product[]>([])
   const [savedToMeal, setSavedToMeal] = useState(false)
+  const [scanning, setScanning] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const detectorRef = useRef<any>(null)
 
+  // Load recent scans from localStorage
   useEffect(() => {
-    // Load recent scans from localStorage
     try {
-      const saved = localStorage.getItem('vitafit-recent-scans')
+      const saved = localStorage.getItem('vitafit_recent_scans')
       if (saved) setRecentScans(JSON.parse(saved).slice(0, 10))
     } catch {}
-    return () => stopCamera()
   }, [])
+
+  const saveRecentScan = (p: Product) => {
+    const updated = [p, ...recentScans.filter(s => s.barcode !== p.barcode)].slice(0, 10)
+    setRecentScans(updated)
+    try { localStorage.setItem('vitafit_recent_scans', JSON.stringify(updated)) } catch {}
+  }
+
+  // Initialize BarcodeDetector or fallback
+  const initBarcodeDetector = async () => {
+    if ('BarcodeDetector' in window) {
+      try {
+        detectorRef.current = new (window as any).BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39']
+        })
+        return true
+      } catch { return false }
+    }
+    return false
+  }
 
   const startCamera = async () => {
     setMode('camera')
     setCameraError('')
+    setScanning(true)
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
       })
       streamRef.current = stream
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         await videoRef.current.play()
       }
+
+      const hasDetector = await initBarcodeDetector()
+
+      if (hasDetector) {
+        // Use native BarcodeDetector API
+        scanIntervalRef.current = setInterval(async () => {
+          if (!videoRef.current || !detectorRef.current) return
+          try {
+            const barcodes = await detectorRef.current.detect(videoRef.current)
+            if (barcodes.length > 0) {
+              const code = barcodes[0].rawValue
+              if (code) {
+                stopCamera()
+                await lookupProduct(code)
+              }
+            }
+          } catch {}
+        }, 300)
+      } else {
+        // Fallback: manual entry prompt
+        setCameraError('Detecção automática não disponível neste navegador. Use a entrada manual abaixo ou aponte para o código de barras e toque em "Capturar".')
+      }
     } catch (err: any) {
-      setCameraError('Não foi possível acessar a câmera. Verifique as permissões do navegador.')
+      console.error('Camera error:', err)
+      setCameraError(
+        err.name === 'NotAllowedError' 
+          ? 'Acesso à câmera negado. Habilite nas configurações do navegador.'
+          : 'Não foi possível acessar a câmera. Tente a entrada manual.'
+      )
+      setMode('home')
     }
   }
 
+  const captureFrame = async () => {
+    if (!videoRef.current || !canvasRef.current) return
+    const canvas = canvasRef.current
+    const video = videoRef.current
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(video, 0, 0)
+
+    // Try BarcodeDetector on the canvas
+    if (detectorRef.current) {
+      try {
+        const barcodes = await detectorRef.current.detect(canvas)
+        if (barcodes.length > 0) {
+          stopCamera()
+          await lookupProduct(barcodes[0].rawValue)
+          return
+        }
+      } catch {}
+    }
+    
+    setError('Código não detectado. Tente novamente ou use a entrada manual.')
+  }
+
   const stopCamera = () => {
+    setScanning(false)
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current)
+      scanIntervalRef.current = null
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null
     }
   }
 
-  const captureAndAnalyze = async () => {
-    if (!videoRef.current || !canvasRef.current) return
-    setSearching(true)
-
-    const canvas = canvasRef.current
-    const video = videoRef.current
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')!
-    ctx.drawImage(video, 0, 0)
-
-    // Simulate barcode detection (in production use BarcodeDetector API or library)
-    try {
-      if ('BarcodeDetector' in window) {
-        const detector = new (window as any).BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] })
-        const barcodes = await detector.detect(canvas)
-        if (barcodes.length > 0) {
-          await lookupProduct(barcodes[0].rawValue)
-          return
-        }
-      }
-    } catch {}
-
-    // Fallback - show manual entry
-    setSearching(false)
-    setError('Código de barras não detectado. Tente digitar manualmente.')
-    setMode('manual')
-    stopCamera()
-  }
-
   const lookupProduct = async (barcode: string) => {
     setSearching(true)
     setError('')
+    setSavedToMeal(false)
 
-    // Check local database first
-    if (LOCAL_PRODUCTS[barcode]) {
-      const p = LOCAL_PRODUCTS[barcode]
-      setProduct(p)
-      addToRecent(p)
-      setMode('result')
-      setSearching(false)
-      stopCamera()
-      return
-    }
-
-    // Try Open Food Facts API
     try {
-      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`)
-      const data = await res.json()
-
-      if (data.status === 1 && data.product) {
-        const p = data.product
-        const nut = p.nutriments || {}
-        
-        const product: Product = {
-          barcode,
-          name: p.product_name_pt || p.product_name || 'Produto desconhecido',
-          brand: p.brands || '',
-          image: p.image_front_small_url || p.image_url || '',
-          nutrition: {
-            calories: Math.round(nut['energy-kcal_100g'] || nut['energy-kcal'] || 0),
-            protein: Math.round((nut.proteins_100g || nut.proteins || 0) * 10) / 10,
-            carbs: Math.round((nut.carbohydrates_100g || nut.carbohydrates || 0) * 10) / 10,
-            fat: Math.round((nut.fat_100g || nut.fat || 0) * 10) / 10,
-            fiber: Math.round((nut.fiber_100g || 0) * 10) / 10,
-            sugar: Math.round((nut.sugars_100g || 0) * 10) / 10,
-            sodium: Math.round((nut.sodium_100g || 0) * 1000),
-          },
-          serving: p.serving_size || '100g',
-          category: p.categories?.split(',')[0]?.trim() || 'Alimento',
-          isHealthy: !['e', 'd'].includes((p.nutriscore_grade || 'c').toLowerCase()),
-          score: (p.nutriscore_grade || '').toUpperCase() || undefined,
-          ingredients: p.ingredients_text_pt || p.ingredients_text || '',
-          warnings: getWarnings(p),
-          tips: getTips(p)
-        }
-
-        setProduct(product)
-        addToRecent(product)
+      // Check local database first
+      if (LOCAL_PRODUCTS[barcode]) {
+        setProduct(LOCAL_PRODUCTS[barcode])
+        saveRecentScan(LOCAL_PRODUCTS[barcode])
         setMode('result')
-        stopCamera()
+        setSearching(false)
         return
       }
-    } catch (e) {
-      console.error('Open Food Facts error:', e)
+
+      // Try Open Food Facts API
+      const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.status === 1 && data.product) {
+          const p = data.product
+          const nutrition = p.nutriments || {}
+          
+          const product: Product = {
+            barcode,
+            name: p.product_name_pt || p.product_name || 'Produto desconhecido',
+            brand: p.brands || undefined,
+            image: p.image_front_small_url || p.image_url || undefined,
+            nutrition: {
+              calories: Math.round(nutrition['energy-kcal_100g'] || nutrition['energy-kcal'] || 0),
+              protein: Math.round((nutrition.proteins_100g || nutrition.proteins || 0) * 10) / 10,
+              carbs: Math.round((nutrition.carbohydrates_100g || nutrition.carbohydrates || 0) * 10) / 10,
+              fat: Math.round((nutrition.fat_100g || nutrition.fat || 0) * 10) / 10,
+              fiber: nutrition.fiber_100g ? Math.round(nutrition.fiber_100g * 10) / 10 : undefined,
+              sodium: nutrition.sodium_100g ? Math.round(nutrition.sodium_100g * 1000) : undefined,
+              sugar: nutrition.sugars_100g ? Math.round(nutrition.sugars_100g * 10) / 10 : undefined,
+            },
+            serving: p.serving_size || '100g',
+            category: p.categories_tags?.[0]?.replace('en:', '') || 'Geral',
+            isHealthy: (p.nutriscore_grade || 'c') <= 'b',
+            score: (p.nutriscore_grade || '?').toUpperCase(),
+            ingredients: p.ingredients_text_pt || p.ingredients_text || undefined,
+            warnings: [],
+            tips: [],
+          }
+
+          // Generate pregnancy-specific warnings
+          if (product.nutrition.sugar && product.nutrition.sugar > 20) product.warnings?.push('Alto teor de açúcar')
+          if (product.nutrition.sodium && product.nutrition.sodium > 500) product.warnings?.push('Alto teor de sódio')
+          if (product.nutrition.fat > 15) product.warnings?.push('Alto teor de gordura')
+          const rawCats = (p.categories || '').toLowerCase()
+          if (rawCats.includes('caffein') || rawCats.includes('coffee') || rawCats.includes('energy')) {
+            product.warnings?.push('Pode conter cafeína - cuidado na gestação')
+          }
+          if (rawCats.includes('alcohol')) product.warnings?.push('⚠️ Álcool é contraindicado na gestação')
+
+          // Generate tips
+          if (product.nutrition.protein > 10) product.tips?.push('Boa fonte de proteínas')
+          if (product.nutrition.fiber && product.nutrition.fiber > 3) product.tips?.push('Rico em fibras')
+          if (product.nutrition.calories < 100) product.tips?.push('Baixas calorias')
+          if (product.isHealthy) product.tips?.push('Boa escolha nutricional!')
+
+          setProduct(product)
+          saveRecentScan(product)
+          setMode('result')
+          setSearching(false)
+          return
+        }
+      }
+
+      setError(`Produto não encontrado (código: ${barcode}). Tente outro código.`)
+    } catch (err) {
+      setError('Erro ao buscar produto. Verifique sua conexão.')
     }
-
-    setError(`Produto com código ${barcode} não encontrado. Tente outro código.`)
     setSearching(false)
-  }
-
-  const getWarnings = (p: any): string[] => {
-    const warnings: string[] = []
-    const nut = p.nutriments || {}
-    if ((nut.sugars_100g || 0) > 20) warnings.push('Alto teor de açúcar')
-    if ((nut.sodium_100g || 0) > 0.6) warnings.push('Alto teor de sódio')
-    if ((nut.fat_100g || 0) > 20) warnings.push('Alto teor de gordura')
-    if ((nut['saturated-fat_100g'] || 0) > 5) warnings.push('Alto em gordura saturada')
-    const allergens = p.allergens_tags || []
-    if (allergens.length > 0) warnings.push('Contém alérgenos')
-    return warnings
-  }
-
-  const getTips = (p: any): string[] => {
-    const tips: string[] = []
-    const nut = p.nutriments || {}
-    if ((nut.fiber_100g || 0) > 3) tips.push('Boa fonte de fibras')
-    if ((nut.proteins_100g || 0) > 10) tips.push('Rico em proteínas')
-    if ((nut.calcium_100g || 0) > 0.1) tips.push('Fonte de cálcio')
-    if ((nut.iron_100g || 0) > 0.002) tips.push('Contém ferro')
-    const grade = (p.nutriscore_grade || '').toLowerCase()
-    if (grade === 'a') tips.push('Excelente perfil nutricional')
-    if (grade === 'b') tips.push('Bom perfil nutricional')
-    return tips
-  }
-
-  const addToRecent = (p: Product) => {
-    const updated = [p, ...recentScans.filter(s => s.barcode !== p.barcode)].slice(0, 10)
-    setRecentScans(updated)
-    try { localStorage.setItem('vitafit-recent-scans', JSON.stringify(updated)) } catch {}
   }
 
   const addToMeal = async () => {
@@ -265,333 +314,415 @@ export default function ScannerPage() {
 
       await supabase.from('meals').insert({
         user_id: user.id,
-        name: product.name,
+        meal_type: 'snack',
+        name: `${product.brand ? product.brand + ' ' : ''}${product.name}`,
         calories: product.nutrition.calories,
         protein: product.nutrition.protein,
         carbs: product.nutrition.carbs,
         fat: product.nutrition.fat,
-        meal_type: getMealType(),
-        source: 'scanner'
+        logged_at: new Date().toISOString()
       })
 
       // Award points for scanning
       await fetch('/api/gamification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, action: 'addPoints', points: 5, reason: 'Escaneou um produto', category: 'nutrition' })
+        body: JSON.stringify({ userId: user.id, action: 'addPoints', points: 5, reason: `Escaneou: ${product.name}`, category: 'scan' })
       })
 
       setSavedToMeal(true)
-      setTimeout(() => setSavedToMeal(false), 3000)
     } catch (e) { console.error(e) }
   }
 
-  const getMealType = () => {
-    const hour = new Date().getHours()
-    if (hour < 10) return 'breakfast'
-    if (hour < 14) return 'lunch'
-    if (hour < 17) return 'snack'
-    return 'dinner'
-  }
-
-  const scoreColor = (score?: string) => {
-    switch (score?.toUpperCase()) {
-      case 'A': return 'bg-green-500 text-white'
-      case 'B': return 'bg-lime-500 text-white'
-      case 'C': return 'bg-yellow-500 text-white'
-      case 'D': return 'bg-orange-500 text-white'
-      case 'E': return 'bg-red-500 text-white'
-      default: return 'bg-gray-200 text-gray-600'
+  const getScoreColor = (score?: string) => {
+    const colors: Record<string, string> = {
+      'A': 'bg-green-500', 'B': 'bg-lime-500', 'C': 'bg-yellow-500',
+      'D': 'bg-orange-500', 'E': 'bg-red-500',
     }
+    return colors[score || ''] || 'bg-gray-400'
   }
 
-  // Camera Mode
-  if (mode === 'camera') {
-    return (
-      <div className="min-h-screen bg-black relative">
-        <video ref={videoRef} className="w-full h-screen object-cover" playsInline muted />
-        <canvas ref={canvasRef} className="hidden" />
+  useEffect(() => {
+    return () => { stopCamera() }
+  }, [])
 
-        {/* Overlay */}
-        <div className="absolute inset-0 flex flex-col">
-          <div className="flex items-center justify-between p-4">
-            <button onClick={() => { stopCamera(); setMode('home') }} className="p-3 bg-black/50 rounded-full text-white">
-              <X className="w-6 h-6" />
-            </button>
-            <span className="text-white font-medium bg-black/50 px-4 py-2 rounded-full text-sm">Aponte para o código de barras</span>
-            <div className="w-12" />
-          </div>
-
-          <div className="flex-1 flex items-center justify-center">
-            <div className="w-72 h-48 relative">
-              <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white rounded-tl-xl" />
-              <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white rounded-tr-xl" />
-              <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white rounded-bl-xl" />
-              <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white rounded-br-xl" />
-              <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-500/80 animate-pulse" />
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-emerald-50 to-white">
+      {/* === HOME VIEW === */}
+      {mode === 'home' && (
+        <>
+          <div className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-4 pt-12 pb-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Link href="/dashboard" className="p-2 rounded-full bg-white/20">
+                <ArrowLeft className="w-5 h-5" />
+              </Link>
+              <h1 className="text-xl font-bold">Scanner de Alimentos</h1>
             </div>
+            <p className="text-sm opacity-80">Escaneie o código de barras para ver as informações nutricionais</p>
           </div>
 
-          {cameraError && (
-            <div className="mx-4 mb-4 p-3 bg-red-500/90 rounded-xl text-white text-sm text-center">
-              {cameraError}
-            </div>
-          )}
-
-          <div className="p-6 flex justify-center gap-4">
-            <button
-              onClick={captureAndAnalyze}
-              disabled={searching}
-              className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-95"
-            >
-              {searching ? <Loader2 className="w-8 h-8 text-primary-600 animate-spin" /> : <ScanLine className="w-8 h-8 text-primary-600" />}
-            </button>
-            <button onClick={() => { stopCamera(); setMode('manual') }} className="p-4 bg-white/20 rounded-full text-white self-center">
-              <Search className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Result Mode
-  if (mode === 'result' && product) {
-    return (
-      <div className="min-h-screen bg-gray-50 pb-24">
-        <header className="bg-white border-b px-4 py-4 sticky top-0 z-10">
-          <div className="flex items-center gap-3">
-            <button onClick={() => { setProduct(null); setMode('home') }} className="p-2 hover:bg-gray-100 rounded-xl">
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <h1 className="text-lg font-bold flex-1">Resultado da Análise</h1>
-            <button onClick={() => { setProduct(null); setMode('home') }} className="text-sm text-primary-600 font-medium">
-              Novo Scan
-            </button>
-          </div>
-        </header>
-
-        <div className="p-4 space-y-4">
-          {/* Product Card */}
-          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <div className={`p-4 ${product.isHealthy ? 'bg-green-50' : 'bg-red-50'}`}>
-              <div className="flex items-center gap-4">
-                {product.image ? (
-                  <img src={product.image} alt={product.name} className="w-16 h-16 rounded-xl object-cover bg-white" />
-                ) : (
-                  <div className="w-16 h-16 bg-white rounded-xl flex items-center justify-center">
-                    <Utensils className="w-8 h-8 text-gray-300" />
-                  </div>
-                )}
-                <div className="flex-1">
-                  <h2 className="font-bold text-lg">{product.name}</h2>
-                  {product.brand && <p className="text-sm text-gray-500">{product.brand}</p>}
-                  <p className="text-xs text-gray-400">{product.category} • {product.serving}</p>
+          <div className="p-4 space-y-4">
+            {/* Main actions */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={startCamera}
+                className="bg-white rounded-2xl border border-gray-200 p-6 text-center hover:shadow-md transition-all active:scale-95"
+              >
+                <div className="w-14 h-14 mx-auto bg-gradient-to-br from-emerald-400 to-teal-500 rounded-2xl flex items-center justify-center mb-3">
+                  <Camera className="w-7 h-7 text-white" />
                 </div>
-                {product.score && (
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-lg ${scoreColor(product.score)}`}>
-                    {product.score}
-                  </div>
-                )}
+                <p className="font-semibold text-sm text-gray-800">Escanear</p>
+                <p className="text-xs text-gray-500 mt-1">Use a câmera</p>
+              </button>
+
+              <button
+                onClick={() => { setMode('manual'); setManualCode(''); setError('') }}
+                className="bg-white rounded-2xl border border-gray-200 p-6 text-center hover:shadow-md transition-all active:scale-95"
+              >
+                <div className="w-14 h-14 mx-auto bg-gradient-to-br from-blue-400 to-indigo-500 rounded-2xl flex items-center justify-center mb-3">
+                  <Search className="w-7 h-7 text-white" />
+                </div>
+                <p className="font-semibold text-sm text-gray-800">Digitar Código</p>
+                <p className="text-xs text-gray-500 mt-1">Entrada manual</p>
+              </button>
+            </div>
+
+            {/* Quick test products */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">🧪 Testar com Produtos</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.values(LOCAL_PRODUCTS).slice(0, 6).map(p => (
+                  <button
+                    key={p.barcode}
+                    onClick={() => lookupProduct(p.barcode)}
+                    className="bg-white rounded-xl border border-gray-200 p-3 text-left hover:bg-gray-50 transition-all"
+                  >
+                    <p className="text-xs font-semibold text-gray-800 truncate">{p.name}</p>
+                    <p className="text-xs text-gray-500">{p.brand}</p>
+                    <div className="flex items-center gap-1 mt-1">
+                      <span className={`w-5 h-5 rounded text-white text-xs flex items-center justify-center font-bold ${getScoreColor(p.score)}`}>
+                        {p.score}
+                      </span>
+                      <span className="text-xs text-gray-400">{p.nutrition.calories} kcal</span>
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                {product.isHealthy ? (
-                  <><ShieldCheck className="w-5 h-5 text-green-600" /><span className="font-semibold text-green-700">Boa escolha!</span></>
-                ) : (
-                  <><ShieldAlert className="w-5 h-5 text-red-500" /><span className="font-semibold text-red-600">Consumir com moderação</span></>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Nutrition */}
-          <div className="bg-white rounded-2xl shadow-sm p-4">
-            <h3 className="font-bold mb-3">Informação Nutricional <span className="text-xs text-gray-400 font-normal">por {product.serving}</span></h3>
-            
-            <div className="grid grid-cols-4 gap-2 mb-4">
-              {[
-                { label: 'Calorias', value: `${product.nutrition.calories}`, unit: 'kcal', color: 'bg-orange-50 text-orange-700' },
-                { label: 'Proteína', value: `${product.nutrition.protein}`, unit: 'g', color: 'bg-blue-50 text-blue-700' },
-                { label: 'Carbos', value: `${product.nutrition.carbs}`, unit: 'g', color: 'bg-yellow-50 text-yellow-700' },
-                { label: 'Gordura', value: `${product.nutrition.fat}`, unit: 'g', color: 'bg-red-50 text-red-700' },
-              ].map(item => (
-                <div key={item.label} className={`${item.color} rounded-xl p-2 text-center`}>
-                  <p className="text-lg font-bold">{item.value}</p>
-                  <p className="text-[10px]">{item.unit}</p>
-                  <p className="text-[10px] opacity-70">{item.label}</p>
+            {/* Recent scans */}
+            {recentScans.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-2">🕐 Escaneados Recentemente</h3>
+                <div className="space-y-2">
+                  {recentScans.slice(0, 5).map(p => (
+                    <button
+                      key={p.barcode}
+                      onClick={() => { setProduct(p); setMode('result') }}
+                      className="w-full flex items-center gap-3 bg-white rounded-xl border border-gray-200 p-3 hover:bg-gray-50"
+                    >
+                      <div className={`w-8 h-8 rounded-lg text-white text-xs flex items-center justify-center font-bold ${getScoreColor(p.score)}`}>
+                        {p.score || '?'}
+                      </div>
+                      <div className="flex-1 text-left">
+                        <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>
+                        <p className="text-xs text-gray-500">{p.brand} • {p.nutrition.calories} kcal</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
-
-            {(product.nutrition.fiber || product.nutrition.sugar || product.nutrition.sodium) && (
-              <div className="grid grid-cols-3 gap-2">
-                {product.nutrition.fiber !== undefined && product.nutrition.fiber > 0 && (
-                  <div className="bg-gray-50 rounded-lg p-2 text-center">
-                    <p className="text-sm font-bold">{product.nutrition.fiber}g</p>
-                    <p className="text-[10px] text-gray-500">Fibras</p>
-                  </div>
-                )}
-                {product.nutrition.sugar !== undefined && product.nutrition.sugar > 0 && (
-                  <div className="bg-gray-50 rounded-lg p-2 text-center">
-                    <p className="text-sm font-bold">{product.nutrition.sugar}g</p>
-                    <p className="text-[10px] text-gray-500">Açúcar</p>
-                  </div>
-                )}
-                {product.nutrition.sodium !== undefined && product.nutrition.sodium > 0 && (
-                  <div className="bg-gray-50 rounded-lg p-2 text-center">
-                    <p className="text-sm font-bold">{product.nutrition.sodium}mg</p>
-                    <p className="text-[10px] text-gray-500">Sódio</p>
-                  </div>
-                )}
               </div>
             )}
           </div>
+        </>
+      )}
 
-          {/* Warnings */}
-          {product.warnings && product.warnings.length > 0 && (
-            <div className="bg-red-50 rounded-2xl p-4">
-              <h3 className="font-bold text-red-700 mb-2 flex items-center gap-2">
-                <AlertCircle className="w-5 h-5" /> Atenção
-              </h3>
-              {product.warnings.map((w, i) => (
-                <p key={i} className="text-sm text-red-600 ml-7">• {w}</p>
-              ))}
+      {/* === CAMERA VIEW === */}
+      {mode === 'camera' && (
+        <div className="fixed inset-0 bg-black z-50">
+          <video ref={videoRef} className="w-full h-full object-cover" playsInline autoPlay muted />
+          <canvas ref={canvasRef} className="hidden" />
+          
+          {/* Overlay */}
+          <div className="absolute inset-0 flex flex-col">
+            {/* Top bar */}
+            <div className="flex items-center justify-between p-4 pt-12">
+              <button onClick={() => { stopCamera(); setMode('home') }} className="p-2 bg-black/40 rounded-full">
+                <X className="w-6 h-6 text-white" />
+              </button>
+              <p className="text-white text-sm font-medium bg-black/40 px-3 py-1.5 rounded-full">
+                {scanning ? '🔍 Escaneando...' : 'Posicione o código'}
+              </p>
+              <div className="w-10" />
             </div>
-          )}
 
-          {/* Tips */}
-          {product.tips && product.tips.length > 0 && (
-            <div className="bg-green-50 rounded-2xl p-4">
-              <h3 className="font-bold text-green-700 mb-2 flex items-center gap-2">
-                <Info className="w-5 h-5" /> Dicas
-              </h3>
-              {product.tips.map((t, i) => (
-                <p key={i} className="text-sm text-green-600 ml-7">• {t}</p>
-              ))}
+            {/* Scan area */}
+            <div className="flex-1 flex items-center justify-center">
+              <div className="w-64 h-40 relative">
+                <div className="absolute top-0 left-0 w-8 h-8 border-t-3 border-l-3 border-white rounded-tl-lg" />
+                <div className="absolute top-0 right-0 w-8 h-8 border-t-3 border-r-3 border-white rounded-tr-lg" />
+                <div className="absolute bottom-0 left-0 w-8 h-8 border-b-3 border-l-3 border-white rounded-bl-lg" />
+                <div className="absolute bottom-0 right-0 w-8 h-8 border-b-3 border-r-3 border-white rounded-br-lg" />
+                {scanning && (
+                  <div className="absolute inset-x-2 h-0.5 bg-emerald-400 animate-pulse" style={{
+                    top: '50%', boxShadow: '0 0 8px rgba(16, 185, 129, 0.8)'
+                  }} />
+                )}
+              </div>
             </div>
-          )}
 
-          {/* Actions */}
-          <div className="flex gap-3">
-            <button
-              onClick={addToMeal}
-              disabled={savedToMeal}
-              className={`flex-1 py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all ${
-                savedToMeal ? 'bg-green-500 text-white' : 'btn-primary'
-              }`}
-            >
-              {savedToMeal ? <><Check className="w-5 h-5" /> Adicionado!</> : <><Plus className="w-5 h-5" /> Adicionar à Refeição</>}
-            </button>
+            {/* Bottom controls */}
+            <div className="p-4 pb-8 space-y-3">
+              {cameraError && (
+                <div className="bg-yellow-500/20 text-yellow-100 text-xs rounded-lg p-3 text-center">
+                  {cameraError}
+                </div>
+              )}
+              <div className="flex items-center justify-center gap-4">
+                <button onClick={captureFrame} className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-95">
+                  <ScanLine className="w-7 h-7 text-emerald-600" />
+                </button>
+              </div>
+              <button
+                onClick={() => { stopCamera(); setMode('manual'); setManualCode(''); setError('') }}
+                className="w-full bg-white/20 text-white py-2.5 rounded-xl text-sm font-medium"
+              >
+                Digitar código manualmente
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    )
-  }
+      )}
 
-  // Home / Manual Mode
-  return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      <header className="bg-white border-b px-4 py-4 sticky top-0 z-10">
-        <div className="flex items-center gap-3 mb-3">
-          <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl">
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div>
-            <h1 className="text-xl font-bold">Scanner Nutricional</h1>
-            <p className="text-sm text-gray-500">Escaneie e descubra os nutrientes</p>
+      {/* === MANUAL ENTRY VIEW === */}
+      {mode === 'manual' && (
+        <>
+          <div className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white px-4 pt-12 pb-6">
+            <div className="flex items-center gap-3 mb-4">
+              <button onClick={() => setMode('home')} className="p-2 rounded-full bg-white/20">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h1 className="text-xl font-bold">Digitar Código</h1>
+            </div>
           </div>
-        </div>
-      </header>
+          <div className="p-4 space-y-4">
+            <div>
+              <label className="text-sm font-medium text-gray-700 block mb-2">Código de Barras (EAN)</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={manualCode}
+                onChange={e => setManualCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="Ex: 7891000100103"
+                maxLength={13}
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-lg tracking-wider focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                autoFocus
+              />
+              <p className="text-xs text-gray-500 mt-1">Digite os números abaixo do código de barras</p>
+            </div>
 
-      <div className="p-4 space-y-4">
-        {/* Scan Button */}
-        <button
-          onClick={startCamera}
-          className="w-full bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-2xl p-6 text-center shadow-lg active:scale-[0.98] transition-transform"
-        >
-          <Camera className="w-12 h-12 mx-auto mb-3" />
-          <h2 className="text-lg font-bold mb-1">Escanear Código de Barras</h2>
-          <p className="text-white/80 text-sm">Aponte a câmera para o código do produto</p>
-        </button>
+            {error && (
+              <div className="bg-red-50 text-red-600 rounded-xl p-3 flex items-center gap-2 text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {error}
+              </div>
+            )}
 
-        {/* Manual Search */}
-        <div className="bg-white rounded-2xl shadow-sm p-4">
-          <h3 className="font-semibold mb-3 flex items-center gap-2">
-            <Search className="w-5 h-5 text-gray-400" /> Busca Manual
-          </h3>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={manualCode}
-              onChange={e => { setManualCode(e.target.value); setError('') }}
-              placeholder="Digite o código de barras"
-              className="input flex-1"
-              inputMode="numeric"
-              onKeyDown={e => e.key === 'Enter' && manualCode.length >= 8 && lookupProduct(manualCode)}
-            />
             <button
               onClick={() => manualCode.length >= 8 && lookupProduct(manualCode)}
               disabled={manualCode.length < 8 || searching}
-              className="btn-primary px-5"
+              className="w-full bg-gradient-to-r from-blue-500 to-indigo-500 text-white py-3.5 rounded-xl font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {searching ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+              {searching ? 'Buscando...' : 'Buscar Produto'}
             </button>
-          </div>
-          {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
-        </div>
 
-        {/* Quick Scan - Popular Products */}
-        <div className="bg-white rounded-2xl shadow-sm p-4">
-          <h3 className="font-semibold mb-3 flex items-center gap-2">
-            <Zap className="w-5 h-5 text-yellow-500" /> Produtos Populares
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            {Object.values(LOCAL_PRODUCTS).slice(0, 6).map(p => (
-              <button
-                key={p.barcode}
-                onClick={() => lookupProduct(p.barcode)}
-                className="flex items-center gap-2 p-2.5 rounded-xl bg-gray-50 hover:bg-primary-50 transition-all text-left"
-              >
-                <span className="text-lg">{p.isHealthy ? '✅' : '⚠️'}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate">{p.name}</p>
-                  <p className="text-[10px] text-gray-400">{p.brand}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent Scans */}
-        {recentScans.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm p-4">
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <RotateCcw className="w-5 h-5 text-gray-400" /> Scans Recentes
-            </h3>
-            <div className="space-y-2">
-              {recentScans.slice(0, 5).map(p => (
-                <button
-                  key={p.barcode}
-                  onClick={() => { setProduct(p); setMode('result') }}
-                  className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-gray-50 transition-all"
-                >
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${p.isHealthy ? 'bg-green-100' : 'bg-red-100'}`}>
-                    {p.isHealthy ? <Check className="w-4 h-4 text-green-600" /> : <AlertCircle className="w-4 h-4 text-red-500" />}
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="text-sm font-medium">{p.name}</p>
-                    <p className="text-[10px] text-gray-400">{p.nutrition.calories} kcal • {p.brand}</p>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300" />
-                </button>
-              ))}
+            {/* Quick test */}
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-2">Teste rápido:</p>
+              <div className="flex flex-wrap gap-2">
+                {['7891000100103', '7894900011517', '7896004800011'].map(code => (
+                  <button
+                    key={code}
+                    onClick={() => { setManualCode(code); lookupProduct(code) }}
+                    className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-200"
+                  >
+                    {code}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
+
+      {/* === RESULT VIEW === */}
+      {mode === 'result' && product && (
+        <>
+          <div className={`px-4 pt-12 pb-6 ${product.isHealthy ? 'bg-gradient-to-r from-green-500 to-emerald-500' : 'bg-gradient-to-r from-red-500 to-orange-500'} text-white`}>
+            <div className="flex items-center gap-3 mb-4">
+              <button onClick={() => { setProduct(null); setMode('home') }} className="p-2 rounded-full bg-white/20">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h1 className="text-xl font-bold">Resultado</h1>
+            </div>
+            <div className="flex items-center gap-4">
+              {product.image ? (
+                <img src={product.image} alt={product.name} className="w-16 h-16 rounded-xl bg-white object-cover" />
+              ) : (
+                <div className="w-16 h-16 rounded-xl bg-white/20 flex items-center justify-center">
+                  <Utensils className="w-8 h-8" />
+                </div>
+              )}
+              <div>
+                <h2 className="text-lg font-bold">{product.name}</h2>
+                {product.brand && <p className="text-sm opacity-80">{product.brand}</p>}
+                <p className="text-xs opacity-60">Porção: {product.serving}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Nutri-Score */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700">Nutri-Score:</span>
+              <div className="flex gap-1">
+                {['A','B','C','D','E'].map(grade => (
+                  <span key={grade} className={`w-7 h-7 rounded-md text-white text-xs flex items-center justify-center font-bold ${
+                    product.score === grade ? getScoreColor(grade) + ' ring-2 ring-offset-1 ring-gray-400 scale-110' : 'bg-gray-200 text-gray-400'
+                  }`}>
+                    {grade}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Pregnancy Safety */}
+            <div className={`rounded-xl p-3 flex items-center gap-3 ${product.isHealthy ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+              {product.isHealthy ? (
+                <ShieldCheck className="w-6 h-6 text-green-600 flex-shrink-0" />
+              ) : (
+                <ShieldAlert className="w-6 h-6 text-red-600 flex-shrink-0" />
+              )}
+              <div>
+                <p className={`text-sm font-semibold ${product.isHealthy ? 'text-green-700' : 'text-red-700'}`}>
+                  {product.isHealthy ? 'Boa escolha para gestantes! ✨' : 'Consumir com moderação ⚠️'}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {product.isHealthy ? 'Este produto tem bom perfil nutricional.' : 'Verifique as informações abaixo.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Nutrition table */}
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50 px-4 py-2.5 border-b">
+                <p className="text-sm font-semibold text-gray-700">Informação Nutricional</p>
+                <p className="text-xs text-gray-500">Por porção ({product.serving})</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {[
+                  { label: 'Calorias', value: product.nutrition.calories, unit: 'kcal', color: 'text-orange-600' },
+                  { label: 'Proteínas', value: product.nutrition.protein, unit: 'g', color: 'text-red-600' },
+                  { label: 'Carboidratos', value: product.nutrition.carbs, unit: 'g', color: 'text-blue-600' },
+                  { label: 'Gorduras', value: product.nutrition.fat, unit: 'g', color: 'text-yellow-600' },
+                  ...(product.nutrition.fiber ? [{ label: 'Fibras', value: product.nutrition.fiber, unit: 'g', color: 'text-green-600' }] : []),
+                  ...(product.nutrition.sugar !== undefined ? [{ label: 'Açúcar', value: product.nutrition.sugar, unit: 'g', color: 'text-pink-600' }] : []),
+                  ...(product.nutrition.sodium !== undefined ? [{ label: 'Sódio', value: product.nutrition.sodium, unit: 'mg', color: 'text-gray-600' }] : []),
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                    <span className="text-sm text-gray-700">{item.label}</span>
+                    <span className={`text-sm font-semibold ${item.color}`}>{item.value} {item.unit}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Macros bar chart */}
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="text-sm font-semibold text-gray-700 mb-3">Distribuição de Macros</p>
+              <div className="space-y-2">
+                {[
+                  { label: 'Proteínas', value: product.nutrition.protein, max: 50, color: 'bg-red-400' },
+                  { label: 'Carboidratos', value: product.nutrition.carbs, max: 80, color: 'bg-blue-400' },
+                  { label: 'Gorduras', value: product.nutrition.fat, max: 40, color: 'bg-yellow-400' },
+                ].map(m => (
+                  <div key={m.label} className="flex items-center gap-2">
+                    <span className="text-xs text-gray-600 w-24">{m.label}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-3">
+                      <div className={`${m.color} h-3 rounded-full transition-all`} style={{ width: `${Math.min(100, (m.value / m.max) * 100)}%` }} />
+                    </div>
+                    <span className="text-xs font-semibold w-10 text-right">{m.value}g</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Warnings */}
+            {product.warnings && product.warnings.length > 0 && (
+              <div className="bg-red-50 rounded-xl border border-red-200 p-4">
+                <p className="text-sm font-semibold text-red-700 mb-2">⚠️ Atenção</p>
+                {product.warnings.map((w, i) => (
+                  <p key={i} className="text-sm text-red-600 flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {w}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {/* Tips */}
+            {product.tips && product.tips.length > 0 && (
+              <div className="bg-green-50 rounded-xl border border-green-200 p-4">
+                <p className="text-sm font-semibold text-green-700 mb-2">💡 Dicas</p>
+                {product.tips.map((t, i) => (
+                  <p key={i} className="text-sm text-green-600 flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 flex-shrink-0" /> {t}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {/* Ingredients */}
+            {product.ingredients && (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="text-sm font-semibold text-gray-700 mb-1">📋 Ingredientes</p>
+                <p className="text-xs text-gray-600 leading-relaxed">{product.ingredients}</p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={addToMeal}
+                disabled={savedToMeal}
+                className={`py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 ${
+                  savedToMeal ? 'bg-green-100 text-green-700' : 'bg-emerald-500 text-white hover:bg-emerald-600'
+                }`}
+              >
+                {savedToMeal ? <><Check className="w-4 h-4" /> Salvo!</> : <><Plus className="w-4 h-4" /> Adicionar à Refeição</>}
+              </button>
+              <button
+                onClick={() => { setProduct(null); setMode('home') }}
+                className="py-3 rounded-xl font-semibold text-sm bg-gray-100 text-gray-700 hover:bg-gray-200"
+              >
+                Escanear Outro
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Loading overlay */}
+      {searching && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-6 text-center">
+            <Loader2 className="w-10 h-10 animate-spin text-emerald-500 mx-auto mb-3" />
+            <p className="font-semibold text-gray-800">Buscando produto...</p>
+            <p className="text-xs text-gray-500 mt-1">Consultando banco de dados</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
