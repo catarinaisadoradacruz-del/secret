@@ -191,27 +191,14 @@ export default function NutritionPage() {
       await supabase.from('recipes').update({ is_favorite: newFav }).eq('id', recipe.id)
       
       // Atualizar lista de receitas
-      setRecipes(prev => prev.map(r => r.id === recipe.id ? { ...r, is_favorite: newFav } : r))
+      setRecipes(prev => prev.map(r => r.id === recipe.id ? ({ ...r, is_favorite: newFav } as Recipe) : r))
       
       // Atualizar receita selecionada se for a mesma
-      if (selectedRecipe?.id === recipe.id) {
-        const updatedRecipe: Recipe = {
-          id: selectedRecipe.id,
-          name: selectedRecipe.name,
-          description: selectedRecipe.description,
-          category: selectedRecipe.category,
-          prep_time: selectedRecipe.prep_time,
-          servings: selectedRecipe.servings,
-          calories: selectedRecipe.calories,
-          protein: selectedRecipe.protein,
-          carbs: selectedRecipe.carbs,
-          fat: selectedRecipe.fat,
-          ingredients: selectedRecipe.ingredients,
-          instructions: selectedRecipe.instructions,
-          is_favorite: newFav,
-          user_id: selectedRecipe.user_id
-        }
-        setSelectedRecipe(updatedRecipe)
+      if (selectedRecipe !== null && selectedRecipe.id === recipe.id) {
+        setSelectedRecipe({
+          ...selectedRecipe,
+          is_favorite: newFav
+        } as Recipe)
       }
     } catch (e) { console.error(e) }
   }
