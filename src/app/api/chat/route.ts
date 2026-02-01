@@ -1,4 +1,4 @@
-// Versão: 01-02-2026-v1 - Groq (Llama 3.3 70B) + Gemini 2.0 + HuggingFace + Fallback
+// Versão: 01-02-2026-v2 - Chat Premium com System Prompt Especialista
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
@@ -21,61 +21,163 @@ function cleanResponse(text: string): string {
 
 function detectTopics(message: string): string[] {
   const topics: string[] = []
-  const lowerMsg = message.toLowerCase()
-  const topicKeywords: Record<string, string[]> = {
-    'nutrição': ['comer', 'comida', 'alimento', 'dieta', 'nutrição', 'refeição', 'vitamina', 'proteína', 'carboidrato', 'receita'],
-    'exercícios': ['exercício', 'treino', 'academia', 'yoga', 'pilates', 'caminhada', 'atividade física'],
-    'gravidez': ['grávida', 'gravidez', 'gestação', 'bebê', 'parto', 'semanas', 'trimestre', 'ultrassom'],
-    'sintomas': ['enjoo', 'náusea', 'dor', 'cólica', 'inchaço', 'cansaço', 'tontura', 'azia'],
-    'emocional': ['ansiedade', 'medo', 'triste', 'feliz', 'preocupada', 'estresse', 'chorar'],
-    'amamentação': ['amamentar', 'amamentação', 'leite', 'mama', 'peito'],
-    'sono': ['dormir', 'sono', 'insônia', 'descanso', 'cansada'],
+  const l = message.toLowerCase()
+  const map: Record<string, string[]> = {
+    'nutrição': ['comer', 'comida', 'alimento', 'dieta', 'nutrição', 'refeição', 'vitamina', 'proteína', 'carboidrato', 'receita', 'café', 'almoço', 'jantar', 'lanche', 'fruta', 'verdura', 'legume', 'salmão', 'ferro', 'cálcio', 'ácido fólico', 'folato', 'ômega', 'suplemento', 'cardápio', 'alimentar'],
+    'exercícios': ['exercício', 'treino', 'academia', 'yoga', 'pilates', 'caminhada', 'atividade física', 'malhar', 'alongamento', 'natação', 'musculação'],
+    'gravidez': ['grávida', 'gravidez', 'gestação', 'gestante', 'bebê', 'parto', 'semanas', 'trimestre', 'ultrassom', 'pré-natal', 'prenatal', 'cesariana', 'natural', 'cesárea', 'contração', 'dilatação'],
+    'sintomas': ['enjoo', 'náusea', 'dor', 'cólica', 'inchaço', 'cansaço', 'tontura', 'azia', 'constipação', 'prisão de ventre', 'câimbra', 'falta de ar', 'dor de cabeça', 'vômito'],
+    'emocional': ['ansiedade', 'ansiosa', 'medo', 'triste', 'tristeza', 'feliz', 'preocupada', 'estresse', 'chorar', 'depressão', 'angústia', 'nervosa', 'insegura'],
+    'amamentação': ['amamentar', 'amamentação', 'leite', 'mama', 'peito', 'mamadeira', 'pega'],
+    'sono': ['dormir', 'sono', 'insônia', 'descanso', 'cansada', 'exausta'],
+    'bebê': ['bebê', 'recém-nascido', 'nome', 'enxoval', 'bolsa maternidade', 'fralda', 'chupeta'],
   }
-  for (const [topic, keywords] of Object.entries(topicKeywords)) {
-    if (keywords.some(kw => lowerMsg.includes(kw))) topics.push(topic)
+  for (const [topic, keywords] of Object.entries(map)) {
+    if (keywords.some(kw => l.includes(kw))) topics.push(topic)
   }
   return topics
+}
+
+function detectMood(message: string): string {
+  const l = message.toLowerCase()
+  if (['triste', 'medo', 'ansiedade', 'ansiosa', 'dor', 'ruim', 'angústia', 'deprimida', 'chorar', 'nervosa', 'preocupada', 'exausta', 'sozinha', 'horrível', 'péssimo', 'sofrendo', 'desanimada'].some(w => l.includes(w))) return 'negative'
+  if (['feliz', 'alegre', 'ótimo', 'maravilhosa', 'bem', 'animada', 'contente', 'amor', 'incrível', 'empolgada'].some(w => l.includes(w))) return 'positive'
+  return 'neutral'
+}
+
+function getTrimestreInfo(week: number): { trimestre: number; nome: string; descricao: string; tamanho: string; dicas: string } {
+  if (week <= 13) {
+    return {
+      trimestre: 1,
+      nome: '1º trimestre',
+      descricao: 'fase de formação dos órgãos do bebê',
+      tamanho: week <= 4 ? 'uma semente de papoula' : week <= 8 ? 'uma framboesa' : week <= 10 ? 'uma azeitona' : 'um limão pequeno',
+      dicas: 'Ácido fólico é essencial agora. Coma alimentos ricos em folato (espinafre, brócolis, feijão). Se sentir enjoo, coma pouco e com frequência. Evite cafeína em excesso (máx 200mg/dia).'
+    }
+  }
+  if (week <= 27) {
+    return {
+      trimestre: 2,
+      nome: '2º trimestre',
+      descricao: 'fase de crescimento acelerado',
+      tamanho: week <= 16 ? 'um abacate' : week <= 20 ? 'uma banana' : week <= 24 ? 'um milho' : 'uma couve-flor',
+      dicas: 'Foque em ferro (carnes, feijão, espinafre) e cálcio (leite, queijo, iogurte). Seu bebê está crescendo rápido e precisa desses nutrientes. Ômega-3 (sardinha, salmão) ajuda no desenvolvimento cerebral.'
+    }
+  }
+  return {
+    trimestre: 3,
+    nome: '3º trimestre',
+    descricao: 'fase final de preparação para o parto',
+    tamanho: week <= 32 ? 'uma jaca pequena' : week <= 36 ? 'um melão' : 'uma melancia pequena',
+    dicas: 'Mantenha a hidratação (mín 2,5L/dia). Coma porções menores e mais frequentes. Alimentos ricos em fibras para evitar constipação. Prepare-se com exercícios de respiração e alongamento.'
+  }
 }
 
 function buildSystemPrompt(
   userName: string, userPhase: string, gestationWeek: number | undefined,
   searchContext: string, mood: string, topics: string[]
 ): string {
-  const phaseContext: Record<string, string> = {
-    'TRYING': 'Ela está tentando engravidar. Foque em fertilidade e preparação.',
-    'PREGNANT': gestationWeek 
-      ? `Ela está grávida de ${gestationWeek} semanas. Dê informações específicas para esse período.`
-      : 'Ela está grávida.',
-    'POSTPARTUM': 'Ela está no pós-parto. Foque em recuperação e amamentação.',
-    'ACTIVE': 'Foque em saúde feminina e bem-estar geral.'
+  let phaseBlock = ''
+  let personalBlock = ''
+
+  if (userPhase === 'PREGNANT' && gestationWeek) {
+    const tri = getTrimestreInfo(gestationWeek)
+    phaseBlock = `GRAVIDEZ DA USUÁRIA:
+• Semana: ${gestationWeek} de 40 (${tri.nome} - ${tri.descricao})
+• O bebê tem o tamanho de ${tri.tamanho}
+• Prioridades nutricionais: ${tri.dicas}
+• Faltam aproximadamente ${40 - gestationWeek} semanas para o parto`
+
+    personalBlock = `COMO PERSONALIZAR:
+• Sempre mencione "com ${gestationWeek} semanas" quando der conselhos sobre gravidez
+• Compare o tamanho do bebê com frutas/objetos para criar conexão emocional
+• Dê dicas específicas para o ${tri.nome}, não genéricas
+• Se falar de exercícios, adapte para ${tri.trimestre === 3 ? 'o terceiro trimestre (mais leves)' : tri.trimestre === 2 ? 'o segundo trimestre (é a melhor fase!)' : 'o primeiro trimestre (com cuidado por causa de enjoos)'}
+• Se falar de alimentação, foque nos nutrientes prioritários dessa fase`
+  } else if (userPhase === 'PREGNANT') {
+    phaseBlock = 'A usuária está grávida mas não informou a semana. Pergunte gentilmente em que semana ela está para personalizar as dicas.'
+  } else if (userPhase === 'TRYING') {
+    phaseBlock = `CONTEXTO: Tentando engravidar
+• Foque em fertilidade, ácido fólico (400mcg/dia), alimentação balanceada
+• Oriente sobre período fértil e hábitos saudáveis
+• Seja otimista e encorajadora`
+  } else if (userPhase === 'POSTPARTUM') {
+    phaseBlock = `CONTEXTO: Pós-parto
+• Foque em recuperação, amamentação, nutrição para lactante
+• Alimentos galactogênicos se amamentando
+• Cuidados com saúde mental (baby blues/depressão pós-parto)
+• Retorno gradual a exercícios (após liberação médica)`
+  } else {
+    phaseBlock = 'Fase: bem-estar geral feminino. Foque em saúde, nutrição e exercícios.'
   }
-  const moodContext = mood === 'negative' 
-    ? 'A usuária parece estar passando por um momento difícil. Seja especialmente acolhedora e empática.'
-    : mood === 'positive' ? 'A usuária parece estar bem! Mantenha o tom positivo.' : ''
-  const topicsContext = topics.length > 0 ? `Tópicos identificados: ${topics.join(', ')}.` : ''
 
-  return `Você é a Vita, assistente de bem-estar materno do VitaFit. Seja carinhosa, acolhedora e profissional.
+  const moodBlock = mood === 'negative'
+    ? `IMPORTANTE: A usuária parece emocionalmente vulnerável. Priorize acolhimento antes de informação. Use frases como "entendo como você se sente", "é normal sentir isso", "você não está sozinha". Só depois ofereça dicas práticas.`
+    : mood === 'positive'
+    ? 'A usuária está com humor positivo! Celebre com ela e mantenha a energia.'
+    : ''
 
-CONTEXTO:
-• Nome da usuária: ${userName}
-• Fase: ${phaseContext[userPhase] || phaseContext['ACTIVE']}
-${moodContext ? `• ${moodContext}` : ''}
-${topicsContext ? `• ${topicsContext}` : ''}
+  return `Você é a VITA, assistente especialista em saúde materna e bem-estar feminino do app VitaFit. Você combina conhecimento de nutricionista, enfermeira obstétrica e psicóloga perinatal em uma personalidade calorosa e acessível.
 
-REGRAS DE FORMATAÇÃO:
-1. NÃO use asteriscos (*) para formatação
-2. NÃO use markdown como ** ou __
-3. Use emojis com moderação (1-3 por resposta)
-4. Para listas, use • ou números
-5. Parágrafos curtos e fáceis de ler
-6. Seja direta e prática
+PERSONALIDADE:
+• Carinhosa mas profissional - como uma amiga enfermeira
+• Usa linguagem simples, sem jargão médico desnecessário
+• Empática e acolhedora, nunca julgadora
+• Prática e direta - sempre dá dicas acionáveis
+• Fala como brasileira natural, sem parecer robótica
 
-DIRETRIZES:
-• Respostas completas e úteis, entre 100-300 palavras
-• Para questões médicas sérias, recomende consultar um profissional
-• Sempre em português brasileiro
-• Se houver informações de pesquisa, cite fontes naturalmente
-${searchContext ? `\nINFORMAÇÕES DA PESQUISA:\n${searchContext}` : ''}`
+INFORMAÇÕES DA USUÁRIA:
+• Nome: ${userName}
+${phaseBlock}
+${personalBlock}
+${moodBlock ? `\n${moodBlock}` : ''}
+${topics.length > 0 ? `\nTópicos detectados: ${topics.join(', ')}` : ''}
+
+REGRAS DE RESPOSTA:
+1. PERSONALIZAÇÃO: Sempre use o nome "${userName}" e dados específicos da fase dela
+2. ESTRUTURA: Use parágrafos curtos (2-3 linhas). Se listar, use • ou números
+3. DICAS PRÁTICAS: Sempre inclua pelo menos 1 dica que ela possa aplicar HOJE
+4. FOLLOW-UP: Termine com uma pergunta de acompanhamento natural para manter a conversa
+5. EMOJIS: Use 2-4 emojis por resposta, distribuídos naturalmente (não no início de cada frase)
+6. COMPRIMENTO: Entre 150-350 palavras. Nem muito curta nem um artigo
+7. NÃO USE: asteriscos (*), markdown, hashtags (#), negrito ou itálico
+8. SEGURANÇA: Para questões médicas sérias, recomende profissional MAS sempre dê informação útil antes
+9. FONTES: Se usar dados de pesquisa, integre naturalmente na conversa (não cite URLs)
+10. TOM: Imagine que está mandando áudio no WhatsApp para uma amiga grávida - natural e caloroso
+
+EXEMPLOS DE TOM CORRETO:
+Bom: "${userName}, com ${gestationWeek || 'X'} semanas seu bebê já está do tamanho de uma manga! 🥭 Nessa fase, o ferro é super importante..."
+Ruim: "Olá! A alimentação na gestação é importante. Recomenda-se o consumo de proteínas..."
+
+Bom: "Ah, essa azia do terceiro trimestre é bem chatinha mesmo 😅 Mas tenho umas dicas que funcionam super bem..."
+Ruim: "A azia é um sintoma comum na gravidez. Recomenda-se evitar alimentos ácidos."
+${searchContext ? `\nINFORMAÇÕES PESQUISADAS (integre naturalmente, não cite links):\n${searchContext}` : ''}`
+}
+
+function shouldSearchWeb(message: string): boolean {
+  const keywords = ['pesquisa', 'pesquisar', 'busca', 'buscar', 'como fazer', 'receita de', 'o que é', 'qual', 'quais', 'dicas', 'recomendações', 'melhores', 'é seguro', 'pode', 'faz mal', 'pode comer', 'posso', 'é normal']
+  const l = message.toLowerCase()
+  return keywords.some(k => l.includes(k)) || (message.includes('?') && message.length > 15)
+}
+
+async function searchWithSerper(query: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: `${query} maternidade gestação saúde mulher`, gl: 'br', hl: 'pt-br', num: 5 })
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    let results = ''
+    if (data.knowledgeGraph) results += `${data.knowledgeGraph.title || ''}: ${data.knowledgeGraph.description || ''}\n`
+    if (data.organic?.length > 0) {
+      data.organic.slice(0, 3).forEach((item: { title: string; snippet: string }, i: number) => {
+        results += `${i + 1}. ${item.title}: ${item.snippet}\n`
+      })
+    }
+    return results || null
+  } catch { return null }
 }
 
 export async function POST(request: Request) {
@@ -131,8 +233,14 @@ export async function POST(request: Request) {
           headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'system', content: systemPrompt }, ...chatHistory, { role: 'user', content: message }],
-            temperature: 0.7, max_tokens: 1024, top_p: 0.9,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              ...chatHistory,
+              { role: 'user', content: message }
+            ],
+            temperature: 0.75,
+            max_tokens: 1200,
+            top_p: 0.9,
           })
         })
         if (response.ok) {
@@ -151,18 +259,21 @@ export async function POST(request: Request) {
     if (geminiKey) {
       try {
         console.log('🤖 Tentando Gemini...')
+        const geminiHistory = chatHistory.map((msg: { role: string; content: string }) => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }]
+        }))
+
         const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-goog-api-key': geminiKey },
           body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemPrompt }] },
             contents: [
-              ...chatHistory.map((msg: { role: string; content: string }) => ({
-                role: msg.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: msg.content }]
-              })),
-              { role: 'user', parts: [{ text: `${systemPrompt}\n\nMensagem: ${message}` }] }
+              ...geminiHistory,
+              { role: 'user', parts: [{ text: message }] }
             ],
-            generationConfig: { temperature: 0.85, maxOutputTokens: 4096, topP: 0.95 },
+            generationConfig: { temperature: 0.8, maxOutputTokens: 2048, topP: 0.92 },
             safetySettings: [
               { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
               { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -191,8 +302,8 @@ export async function POST(request: Request) {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${hfToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            inputs: `<s>[INST] ${systemPrompt}\n\nMensagem: ${message} [/INST]`,
-            parameters: { max_new_tokens: 500, temperature: 0.7, return_full_text: false }
+            inputs: `<s>[INST] ${systemPrompt}\n\nMensagem da usuária: ${message} [/INST]`,
+            parameters: { max_new_tokens: 600, temperature: 0.7, return_full_text: false }
           })
         })
         if (response.ok) {
@@ -222,83 +333,72 @@ export async function POST(request: Request) {
   }
 }
 
-function detectMood(message: string): string {
-  const l = message.toLowerCase()
-  if (['triste', 'medo', 'ansiedade', 'dor', 'ruim', 'angústia', 'deprimida', 'chorar', 'nervosa', 'preocupada', 'exausta', 'sozinha'].some(w => l.includes(w))) return 'negative'
-  if (['feliz', 'alegre', 'ótimo', 'maravilhosa', 'bem', 'animada', 'contente', 'amor'].some(w => l.includes(w))) return 'positive'
-  return 'neutral'
-}
-
-function shouldSearchWeb(message: string): boolean {
-  const keywords = ['pesquisa', 'pesquisar', 'busca', 'buscar', 'como fazer', 'receita de', 'o que é', 'qual', 'quais', 'dicas', 'recomendações', 'melhores', 'é seguro', 'faz mal']
-  const l = message.toLowerCase()
-  return keywords.some(k => l.includes(k)) || (message.includes('?') && message.length > 15)
-}
-
-async function searchWithSerper(query: string): Promise<string | null> {
-  try {
-    const response = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: `${query} maternidade gestação Brasil`, gl: 'br', hl: 'pt-br', num: 5 })
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    let results = ''
-    if (data.knowledgeGraph) results += `${data.knowledgeGraph.title || ''}: ${data.knowledgeGraph.description || ''}\n`
-    if (data.organic?.length > 0) {
-      results += '\nFontes:\n'
-      data.organic.slice(0, 3).forEach((item: { title: string; snippet: string; link: string }, i: number) => {
-        results += `${i + 1}. ${item.title}: ${item.snippet} (${item.link})\n`
-      })
-    }
-    return results || null
-  } catch { return null }
-}
-
 function generateLocalResponse(message: string, userName: string, userPhase: string, gestationWeek: number | undefined, searchContext: string, mood: string): string {
   const l = message.toLowerCase()
-  const g = mood === 'negative' ? `Oi ${userName}! 💜 Estou aqui com você.` : `Olá, ${userName}! 💜`
+  const isPregnant = userPhase === 'PREGNANT'
+  const weekText = gestationWeek ? `com ${gestationWeek} semanas` : ''
+  const tri = gestationWeek ? getTrimestreInfo(gestationWeek) : null
 
-  if (l.match(/^(oi|olá|ola|hey|eai|e ai|bom dia|boa tarde|boa noite|opa|tudo bem)/)) {
-    return `${g} Que bom te ver! Como posso te ajudar hoje?\n\n• Nutrição e alimentação\n• Exercícios seguros\n• Dúvidas sobre gravidez\n• Bem-estar e autocuidado\n\nO que você gostaria de saber?`
-  }
-  
-  if (l.match(/(o que você faz|o que vc faz|pode fazer|suas funções|quem é você)/)) {
-    return `${g} Sou a Vita, sua assistente de bem-estar materno! 😊\n\n🍎 Nutrição → alimentação para cada fase\n🏃‍♀️ Exercícios → atividades seguras\n🤰 Gravidez → informações por trimestre\n👶 Pós-parto → cuidados e amamentação\n💭 Apoio → estou aqui para ouvir\n\nÉ só perguntar! 💜`
-  }
-
-  if (l.match(/(ácido fólico|folico|folato)/)) {
-    return `${userName}, o ácido fólico é super importante! 💚\n\n🥬 Vegetais → espinafre, couve, brócolis\n🫘 Leguminosas → feijão, lentilha, grão-de-bico\n🍊 Frutas → laranja, abacate, morango\n🥚 Outros → ovos, gérmen de trigo\n\nRecomendação: 400-600mcg/dia.${userPhase === 'PREGNANT' ? ' Seu médico pode indicar suplementação.' : ''} 💜`
-  }
-
-  if (l.match(/(comer|alimentação|comida|alimento|dieta|nutrição|café|almoço|jantar|lanche)/)) {
-    if (userPhase === 'PREGNANT') {
-      return `${userName}, na gestação${gestationWeek ? ` (${gestationWeek} semanas! 🤰)` : ''} a alimentação é fundamental!\n\n🥬 Ácido fólico → vegetais verde-escuros\n🥛 Cálcio → leite, iogurte, queijos\n🥩 Ferro → carnes magras, feijão\n🐟 Ômega-3 → sardinha, salmão (cozidos)\n💧 Água → mínimo 2L/dia\n\n⚠️ Evite: álcool, peixes crus, cafeína em excesso\n\nQuer um cardápio específico? 💜`
+  // Saudação
+  if (l.match(/^(oi|olá|ola|hey|eai|e ai|bom dia|boa tarde|boa noite|opa|tudo bem|oi vita)/)) {
+    if (isPregnant && tri) {
+      return `Oi, ${userName}! 😊 Que bom te ver por aqui!\n\n${weekText} seu bebê já está do tamanho de ${tri.tamanho}! Que emoção, né? 🤰\n\nPosso te ajudar com várias coisas:\n\n🍎 Alimentação ideal pro ${tri.nome}\n🏃‍♀️ Exercícios seguros pra essa fase\n💊 Vitaminas e suplementos\n😴 Dicas de sono e conforto\n💭 Apoio emocional\n\nSobre o que quer conversar hoje?`
     }
-    return `${userName}, para alimentação saudável:\n\n🥗 Variedade de cores no prato\n🥬 5+ porções de vegetais/dia\n🍎 3 frutas diárias\n💧 2L de água/dia\n🥩 Proteínas variadas\n🌾 Fibras e integrais\n\nPosso dar dicas específicas! 💜`
+    return `Oi, ${userName}! 😊 Que bom te ver!\n\nSou a Vita, sua companheira de bem-estar aqui no VitaFit. Posso te ajudar com:\n\n🍎 Nutrição e receitas saudáveis\n🏃‍♀️ Exercícios e atividade física\n🤰 Tudo sobre gravidez\n💭 Bem-estar emocional\n\nMe conta, como posso te ajudar hoje?`
   }
 
-  if (l.match(/(exercício|treino|academia|yoga|pilates|caminhada|atividade física|malhar)/)) {
-    if (userPhase === 'PREGNANT') {
-      return `${userName}, exercícios na gestação são ótimos! 🏃‍♀️\n\n✅ Recomendados:\n• Caminhada → 30 min/dia\n• Yoga prenatal\n• Pilates adaptado\n• Natação\n• Alongamentos\n\n⚠️ Evite: esportes de contato, risco de queda\n\nPare se sentir: tontura, sangramento, contrações.\nConsulte seu médico! 💜`
+  // Alimentação
+  if (l.match(/(comer|alimentação|comida|alimento|dieta|nutrição|café|almoço|jantar|lanche|cardápio|o que posso comer)/)) {
+    if (isPregnant && tri) {
+      const nutrientes: Record<number, string> = {
+        1: `No ${tri.nome}, o ácido fólico é o protagonista! 💚 Ele protege o tubo neural do bebê.\n\nAlimentos campeões agora:\n• Espinafre e brócolis (folato natural)\n• Feijão e lentilha (ferro + proteína)\n• Ovos (colina, ótimo pro cérebro do bebê)\n• Frutas cítricas (vitamina C ajuda absorver ferro)\n\nDica pra hoje: que tal um omelete de espinafre no jantar? Simples, rápido e super nutritivo! 🍳`,
+        2: `No ${tri.nome}, ${weekText}, o bebê está crescendo rápido e precisa de bastante nutriente! 💪\n\nFoque em:\n• Ferro: carnes vermelhas magras, feijão preto, espinafre\n• Cálcio: leite, iogurte natural, queijo branco\n• Ômega-3: sardinha, salmão (sempre bem cozidos!)\n• Proteínas: frango, peixe, ovo, tofu\n\nDica prática: intercale proteína animal e vegetal durante a semana. Segunda sem carne com lentilha, por exemplo! 🥗`,
+        3: `No ${tri.nome}, ${weekText}, o bebê está ganhando peso e se preparando pra chegar! 🎉\n\nPriorize agora:\n• Porções menores e mais frequentes (o estômago fica apertado)\n• Fibras: aveia, chia, frutas com casca (evita constipação)\n• Proteína: essencial pro ganho de peso saudável do bebê\n• Água: mínimo 2,5L por dia\n• Tâmaras: estudos mostram que ajudam no trabalho de parto!\n\nDica pra hoje: um iogurte com granola e banana no lanche da tarde é perfeito pra essa fase 🍌`
+      }
+      return `${userName}, ótima pergunta! ${weekText} a alimentação faz toda diferença pro seu bebê (que já está do tamanho de ${tri.tamanho}! 🥰)\n\n${nutrientes[tri.trimestre]}\n\nQuer que eu monte um cardápio completo pro seu dia?`
     }
-    return `${userName}, que ótimo se exercitar! 🏃‍♀️\n\n• Caminhada → 30-40 min, 5x/semana\n• Yoga → flexibilidade e relaxamento\n• Pilates → fortalecimento\n• Musculação → com orientação\n• Natação → condicionamento\n\nComece devagar e aumente gradualmente! 💜`
+
+    return `${userName}, vamos montar uma alimentação mais saudável! 🥗\n\nRegra de ouro: prato colorido = prato nutritivo!\n\n• Metade do prato: salada e legumes variados\n• 1/4 do prato: proteína (frango, peixe, ovo, tofu)\n• 1/4 do prato: carboidrato integral (arroz integral, batata doce)\n• Uma fruta de sobremesa\n\nLanches inteligentes:\n• Iogurte com frutas\n• Mix de castanhas (30g)\n• Banana com pasta de amendoim\n\nDica rápida pra hoje: troque o arroz branco pelo integral e adicione uma cor nova no prato que você não costuma comer 🌈\n\nQuer dicas mais específicas pra alguma refeição?`
   }
 
-  if (l.match(/(dormir|sono|insônia|descanso|cansada|exausta)/)) {
-    return `${userName}, o sono é fundamental! 😴\n\n• Horários regulares\n• Sem telas 1h antes\n• Ambiente escuro e fresco\n• Chá de camomila ou maracujá\n${userPhase === 'PREGNANT' ? '• Durma de lado (esquerdo)\n• Almofada entre as pernas' : '• Atividade física regular\n• Sem cafeína após 14h'}\n\nSe persistir, converse com seu médico! 💜`
+  // Exercícios
+  if (l.match(/(exercício|treino|academia|yoga|pilates|caminhada|atividade|malhar|alongamento)/)) {
+    if (isPregnant && tri) {
+      const exPorTri: Record<number, string> = {
+        1: `No ${tri.nome}, pode rolar enjoo, então exercícios leves são os melhores:\n\n• Caminhada de 20-30 min (o melhor exercício!)\n• Yoga suave (evite posições invertidas)\n• Alongamento matinal de 10 min\n• Natação (alivia enjoo pra muitas mamães!)\n\nDica: se sentir enjoo, coma um biscoitinho 30 min antes de se exercitar`,
+        2: `O ${tri.nome} é a MELHOR fase pra exercícios! 🎉 Mais energia e menos enjoo:\n\n• Caminhada de 30-40 min, 5x/semana\n• Yoga prenatal (ótimo pra flexibilidade)\n• Pilates com bola (fortalece o assoalho pélvico)\n• Musculação leve (com orientação profissional)\n• Natação e hidroginástica\n\nDica: esse é o momento de fortalecer pernas e assoalho pélvico pro parto!`,
+        3: `No ${tri.nome}, ${weekText}, o foco é conforto e preparação:\n\n• Caminhada leve de 20 min\n• Exercícios de respiração (4-7-8: inspira 4s, segura 7s, expira 8s)\n• Bola suíça (alivia dor lombar!)\n• Yoga restaurativa\n• Agachamento na parede (prepara pro parto)\n\nDica: a bola suíça é sua melhor amiga agora! Sente nela pra ver TV 😄`
+      }
+      return `${userName}, que ótimo que quer se movimentar ${weekText}! 🏃‍♀️\n\n${exPorTri[tri.trimestre]}\n\n⚠️ Pare imediatamente se: tontura, sangramento, contrações antes da hora, dor forte.\n\nJá conversa com seu obstetra sobre exercícios?`
+    }
+
+    return `${userName}, bora se movimentar! 💪\n\nPra começar ou manter uma rotina:\n\n• Caminhada: 30 min/dia, o básico que funciona\n• Yoga: flexibilidade + calma mental\n• Pilates: core forte e postura\n• Musculação: com orientação profissional\n• Dança: divertido e queima caloria\n\nDica pra começar: 15 min por dia já faz diferença! Melhor pouco todo dia do que muito de vez em quando 😊\n\nQual tipo de exercício te interessa mais?`
   }
 
-  if (l.match(/(ansiedade|ansiosa|medo|triste|deprimida|chorar|estresse|nervosa|preocupada)/)) {
-    return `${userName}, seus sentimentos são válidos. 💜\n\n🧘 Respiração → inspire 4s, segure 4s, expire 6s\n🚶 Caminhada ao ar livre\n✍️ Anote seus sentimentos\n🫂 Converse com alguém de confiança\n🎵 Sons relaxantes\n🛁 Tempo para você\n\nSe persistir, considere um psicólogo. Pedir ajuda é força! 💜`
-  }
-
+  // Enjoo/náusea
   if (l.match(/(enjoo|enjoada|náusea|vômito|azia)/)) {
-    return `${userName}, vamos aliviar isso! 🍋\n\n• Coma pouco e frequente (2 em 2h)\n• Biscoito de água e sal ao acordar\n• Gengibre: chá, bala ou cristalizado\n• Limão: cheirar ou água com gotas\n• Evite cheiros fortes e frituras\n• Picolé de frutas ajuda\n\nSe muito intenso com perda de peso, procure o médico! 💜`
+    return `${userName}, eu sei que isso é bem desconfortável 😔\n\nDicas que realmente funcionam:\n\n🍋 Gengibre: chá, bala ou cristalizado (o mais eficaz!)\n🍪 Biscoito de água e sal antes de levantar da cama\n🧊 Picolé de frutas ácidas (limão, maracujá)\n🍌 Banana e torrada seca ao acordar\n🫗 Beba líquidos entre as refeições, não durante\n⏰ Coma de 2 em 2 horas, pouca quantidade\n\nO que NÃO fazer:\n• Ficar muito tempo sem comer\n• Cheiros fortes (cozinha, perfumes)\n• Deitar logo após comer\n\nSe estiver vomitando mais de 3x por dia ou perdendo peso, avise seu médico, tá? Pode ser hiperêmese e precisa de tratamento 💜\n\nComo está sendo o enjoo? É mais de manhã ou o dia todo?`
   }
 
-  if (searchContext) return `${g} Encontrei informações:\n\n${searchContext}\n\nPosso ajudar mais? 💜`
-  
-  return `${g}\n\nPosso te ajudar com:\n• Nutrição e alimentação\n• Exercícios e bem-estar\n• Dúvidas sobre gravidez\n• Cuidados pós-parto\n• Apoio emocional\n\nPergunte algo específico! 😊`
+  // Emocional
+  if (l.match(/(ansiedade|ansiosa|medo|triste|deprimida|chorar|estresse|nervosa|preocupada|insegura|sozinha)/)) {
+    return `${userName}, primeiro: obrigada por confiar em mim pra falar sobre isso 💜\n\nO que você está sentindo é completamente válido. ${isPregnant ? 'A gravidez traz uma montanha-russa de hormônios e emoções, e tudo bem não estar bem o tempo todo.' : 'Todas nós passamos por momentos difíceis, e reconhecer isso já é um passo lindo.'}\n\nAlgumas coisas que podem ajudar agora:\n\n🧘 Respire comigo: inspire em 4 segundos, segure 4, expire em 6\n🚶 Uma caminhada curta ao ar livre (sol faz maravilhas!)\n✍️ Escreva o que sente, sem filtro\n🫂 Ligue pra alguém que te faz bem\n🎵 Uma playlist que te acalme\n🛁 Um banho morno com calma\n\nSe isso for persistente ou muito intenso, conversar com um psicólogo pode ser transformador. Pedir ajuda é um ato de coragem, não de fraqueza 💪\n\nQuer me contar mais sobre o que está sentindo?`
+  }
+
+  // Sono
+  if (l.match(/(dormir|sono|insônia|descanso|cansada|exausta)/)) {
+    return `${userName}, o sono é fundamental e eu entendo a frustração 😴\n\n${isPregnant ? `Com ${gestationWeek || 'algumas'} semanas, dormir bem fica mais difícil. Algumas dicas:\n\n• Durma de lado esquerdo (melhor circulação pro bebê)\n• Almofada entre as pernas e atrás das costas\n• Travesseiro de gestante faz MUITA diferença` : 'Vamos melhorar essa qualidade de sono:'}\n\n🌙 Rotina noturna:\n• Desligue telas 1h antes de dormir\n• Chá de camomila ou maracujá\n• Ambiente escuro e fresco (18-22°C)\n• Horários regulares de dormir e acordar\n\n• Evite cafeína após 14h\n• Exercício leve de manhã ajuda a dormir à noite\n• Se não dormir em 20 min, levante e faça algo calmo\n\nEstá tendo dificuldade pra pegar no sono ou acorda muito durante a noite?`
+  }
+
+  // Default com contexto de pesquisa
+  if (searchContext) {
+    return `${userName}, pesquisei sobre isso pra você! 😊\n\n${searchContext}\n\nEssas informações te ajudaram? Quer que eu aprofunde em algum ponto específico?`
+  }
+
+  // Default genérico - mas com personalidade
+  if (isPregnant && tri) {
+    return `${userName}, boa pergunta! 😊\n\n${weekText} você está no ${tri.nome} e seu bebê tem o tamanho de ${tri.tamanho}! 🤰\n\nPosso te ajudar com muitas coisas:\n\n🍎 Alimentação ideal pra essa fase\n🏃‍♀️ Exercícios seguros ${weekText}\n💊 Vitaminas e suplementos\n😴 Dicas de sono e conforto\n🤢 Lidar com sintomas\n💭 Apoio emocional\n\nMe conta com mais detalhes o que quer saber e eu te dou uma resposta bem completa!`
+  }
+
+  return `${userName}, estou aqui pra te ajudar! 😊\n\nPosso conversar sobre:\n\n🍎 Alimentação e nutrição\n🏃‍♀️ Exercícios e bem-estar\n🤰 Gravidez e maternidade\n👶 Cuidados com o bebê\n💭 Saúde emocional\n\nMe conta com mais detalhes o que quer saber!`
 }
