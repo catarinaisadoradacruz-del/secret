@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { 
   ArrowLeft, Send, Sparkles, Loader2, Menu, Plus, MessageCircle, X,
-  MoreVertical, Edit2, Trash2, Check, ChevronLeft, ChevronRight, Search
+  MoreVertical, Edit2, Trash2, Check, ChevronLeft, ChevronRight, Search,
+  Heart, Utensils, Baby, Dumbbell, Moon, Pill, Smile
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -13,6 +14,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   created_at: string
+  suggestions?: string[]
 }
 
 interface ChatSession {
@@ -34,11 +36,12 @@ export default function ChatPage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { loadSessions() }, [])
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, suggestions])
   useEffect(() => {
     const handleClick = () => setMenuOpen(null)
     if (menuOpen) {
@@ -62,11 +65,11 @@ export default function ChatPage() {
     } catch (e) { console.error(e) }
   }
 
-  // ✅ CORRIGIDO: mensagens ficam na coluna JSONB 'messages' de chat_sessions
   const loadMessages = async (sessionId: string) => {
     setLoadingMessages(true)
     setCurrentSession(sessionId)
     setMessages([])
+    setSuggestions([])
     setShowMobileSidebar(false)
     
     try {
@@ -77,10 +80,7 @@ export default function ChatPage() {
         .eq('id', sessionId)
         .single()
 
-      if (error) {
-        console.error('Erro ao carregar mensagens:', error)
-        return
-      }
+      if (error) { console.error('Erro ao carregar mensagens:', error); return }
 
       const rawMessages = data?.messages || []
       const formatted: Message[] = rawMessages.map((msg: { role: string; content: string }, i: number) => ({
@@ -97,6 +97,7 @@ export default function ChatPage() {
   const createNewSession = () => {
     setCurrentSession(null)
     setMessages([])
+    setSuggestions([])
     setShowMobileSidebar(false)
     inputRef.current?.focus()
   }
@@ -131,12 +132,12 @@ export default function ChatPage() {
     } catch (e) { console.error(e) }
   }
 
-  // ✅ CORRIGIDO: salva mensagens na coluna JSONB, não em tabela separada
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return
-    const userMessage = input.trim()
+  const sendMessage = async (text?: string) => {
+    const userMessage = (text || input).trim()
+    if (!userMessage || loading) return
     setInput('')
     setLoading(true)
+    setSuggestions([])
 
     const tempId = 'temp-' + Date.now()
     setMessages(prev => [...prev, { id: tempId, role: 'user', content: userMessage, created_at: new Date().toISOString() }])
@@ -149,7 +150,6 @@ export default function ChatPage() {
       let sessionId = currentSession
       
       if (!sessionId) {
-        // Nova sessão
         const title = userMessage.length > 50 ? userMessage.slice(0, 47) + '...' : userMessage
         const { data: newSession } = await supabase
           .from('chat_sessions')
@@ -168,13 +168,7 @@ export default function ChatPage() {
           setSessions(prev => [newSession, ...prev])
         }
       } else {
-        // Sessão existente: append mensagem do usuário
-        const { data: session } = await supabase
-          .from('chat_sessions')
-          .select('messages')
-          .eq('id', sessionId)
-          .single()
-
+        const { data: session } = await supabase.from('chat_sessions').select('messages').eq('id', sessionId).single()
         const currentMsgs = session?.messages || []
         await supabase.from('chat_sessions').update({ 
           messages: [...currentMsgs, { role: 'user', content: userMessage }],
@@ -183,7 +177,6 @@ export default function ChatPage() {
         }).eq('id', sessionId)
       }
 
-      // Chamar IA
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -196,20 +189,15 @@ export default function ChatPage() {
 
       const data = await response.json()
       const aiContent = data.response || 'Desculpe, não consegui processar.'
+      const aiSuggestions = data.suggestions || []
 
-      // Mostrar resposta da IA
       setMessages(prev => [...prev, { 
-        id: 'ai-' + Date.now(), role: 'assistant', content: aiContent, created_at: new Date().toISOString() 
+        id: 'ai-' + Date.now(), role: 'assistant', content: aiContent, created_at: new Date().toISOString(), suggestions: aiSuggestions
       }])
+      setSuggestions(aiSuggestions)
 
-      // Salvar resposta da IA na sessão
       if (sessionId) {
-        const { data: session } = await supabase
-          .from('chat_sessions')
-          .select('messages')
-          .eq('id', sessionId)
-          .single()
-
+        const { data: session } = await supabase.from('chat_sessions').select('messages').eq('id', sessionId).single()
         const currentMsgs = session?.messages || []
         await supabase.from('chat_sessions').update({ 
           messages: [...currentMsgs, { role: 'assistant', content: aiContent }],
@@ -224,51 +212,47 @@ export default function ChatPage() {
       }
     } catch (e) {
       console.error(e)
-      setMessages(prev => [...prev.filter(m => m.id !== tempId), { 
-        id: 'err-' + Date.now(), role: 'assistant', content: 'Erro ao enviar. Tente novamente.', created_at: new Date().toISOString() 
+      setMessages(prev => [...prev, { 
+        id: 'err-' + Date.now(), role: 'assistant', content: 'Erro ao enviar. Tente novamente.', created_at: new Date().toISOString()
       }])
     } finally { setLoading(false) }
   }
 
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-    if (days === 0) return 'Hoje'
-    if (days === 1) return 'Ontem'
-    if (days < 7) return `${days}d atrás`
-    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  const handleSuggestionClick = (suggestion: string) => {
+    setSuggestions([])
+    sendMessage(suggestion)
   }
 
-  const filteredSessions = sessions.filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()))
+  const filteredSessions = sessions.filter(s => !searchQuery || s.title.toLowerCase().includes(searchQuery.toLowerCase()))
 
-  const renderSessionItem = (s: ChatSession, isMobile: boolean) => (
-    <div key={s.id} className={`group relative rounded-xl transition-colors cursor-pointer ${currentSession === s.id ? 'bg-primary-50 border border-primary-200' : 'hover:bg-gray-100 border border-transparent'}`} onClick={() => loadMessages(s.id)}>
-      {editingSession === s.id ? (
-        <form onSubmit={saveSessionTitle} className="flex items-center gap-1 p-2">
-          <input type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="flex-1 px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-primary-500 outline-none" autoFocus onClick={(e) => e.stopPropagation()} />
-          <button type="submit" className="p-1.5 text-green-600 hover:bg-green-50 rounded"><Check className="w-4 h-4" /></button>
-          <button type="button" onClick={(e) => { e.stopPropagation(); setEditingSession(null) }} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded"><X className="w-4 h-4" /></button>
-        </form>
-      ) : (
-        <div className="p-2.5 pr-10">
-          <div className="flex items-center gap-2">
-            <MessageCircle className={`w-4 h-4 flex-shrink-0 ${currentSession === s.id ? 'text-primary-600' : 'text-gray-400'}`} />
-            <span className={`truncate text-sm ${currentSession === s.id ? 'text-primary-700 font-medium' : ''}`}>{s.title}</span>
-          </div>
-          <p className="text-xs text-gray-400 mt-0.5 ml-6">{formatDate(s.updated_at)}</p>
-        </div>
-      )}
+  const formatDate = (date: string) => {
+    const d = new Date(date)
+    const now = new Date()
+    const diff = now.getTime() - d.getTime()
+    if (diff < 86400000) return 'Hoje'
+    if (diff < 172800000) return 'Ontem'
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)}d`
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  }
+
+  const renderSessionItem = (s: ChatSession, isMobile = false) => (
+    <div key={s.id} onClick={() => loadMessages(s.id)} className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all ${currentSession === s.id ? 'bg-primary-50 border border-primary-200' : 'hover:bg-gray-50'}`}>
+      <MessageCircle className={`w-4 h-4 flex-shrink-0 ${currentSession === s.id ? 'text-primary-500' : 'text-gray-400'}`} />
+      <div className="flex-1 min-w-0">
+        {editingSession === s.id ? (
+          <form onSubmit={saveSessionTitle} className="flex gap-1"><input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} className="flex-1 text-sm px-2 py-0.5 border rounded" /><button type="submit" className="p-0.5"><Check className="w-4 h-4 text-green-500" /></button></form>
+        ) : (
+          <p className="text-sm truncate font-medium">{s.title}</p>
+        )}
+        <p className="text-xs text-gray-400">{formatDate(s.updated_at)}</p>
+      </div>
       {editingSession !== s.id && (
-        <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
-          <button onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === s.id ? null : s.id) }} className={`p-1.5 rounded-lg hover:bg-gray-200 transition-all ${isMobile ? '' : 'opacity-0 group-hover:opacity-100'}`} style={menuOpen === s.id ? { opacity: 1 } : undefined}>
-            <MoreVertical className="w-4 h-4 text-gray-500" />
-          </button>
+        <div className="relative">
+          <button onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === s.id ? null : s.id) }} className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded transition-all"><MoreVertical className="w-4 h-4 text-gray-400" /></button>
           {menuOpen === s.id && (
-            <div className={`absolute right-0 top-8 bg-white border rounded-lg shadow-lg py-1 min-w-[140px] ${isMobile ? 'z-[60]' : 'z-20'}`}>
-              <button onClick={(e) => startEditSession(s, e)} className="w-full px-3 py-2.5 text-left text-sm hover:bg-gray-100 flex items-center gap-2"><Edit2 className="w-4 h-4 text-gray-600" /> Renomear</button>
-              <button onClick={(e) => deleteSession(s.id, e)} className="w-full px-3 py-2.5 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2"><Trash2 className="w-4 h-4" /> Excluir</button>
+            <div className="absolute right-0 top-8 bg-white shadow-xl border rounded-xl py-1 z-50 w-36">
+              <button onClick={(e) => startEditSession(s, e)} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full"><Edit2 className="w-3.5 h-3.5" /> Renomear</button>
+              <button onClick={(e) => deleteSession(s.id, e)} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-red-50 text-red-600 w-full"><Trash2 className="w-3.5 h-3.5" /> Excluir</button>
             </div>
           )}
         </div>
@@ -276,56 +260,47 @@ export default function ChatPage() {
     </div>
   )
 
-  return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
-      {/* Sidebar Desktop */}
-      <div className={`hidden md:flex flex-col bg-white border-r transition-all duration-300 ${sidebarCollapsed ? 'w-16' : 'w-72'}`}>
-        {!sidebarCollapsed ? (
-          <>
-            <div className="p-3 border-b flex items-center justify-between">
-              <h2 className="font-bold">Conversas</h2>
-              <button onClick={() => setSidebarCollapsed(true)} className="p-1.5 hover:bg-gray-100 rounded-lg"><ChevronLeft className="w-5 h-5" /></button>
-            </div>
-            <div className="p-2">
-              <button onClick={createNewSession} className="w-full flex items-center justify-center gap-2 p-2.5 bg-primary-500 hover:bg-primary-600 text-white rounded-xl font-medium transition-colors"><Plus className="w-5 h-5" /> Nova Conversa</button>
-            </div>
-            <div className="px-2 pb-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input type="text" placeholder="Buscar..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary-500 outline-none" />
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-1">
-              {filteredSessions.length === 0 ? (
-                <p className="text-center text-gray-400 text-sm py-8">{searchQuery ? 'Nenhuma encontrada' : 'Nenhuma conversa'}</p>
-              ) : filteredSessions.map(s => renderSessionItem(s, false))}
-            </div>
-          </>
-        ) : (
-          <div className="flex flex-col items-center py-3 gap-2">
-            <button onClick={() => setSidebarCollapsed(false)} className="p-2 hover:bg-gray-100 rounded-lg"><ChevronRight className="w-5 h-5" /></button>
-            <button onClick={createNewSession} className="p-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg"><Plus className="w-5 h-5" /></button>
-          </div>
-        )}
-      </div>
+  // Quick topic buttons for welcome screen
+  const quickTopics = [
+    { icon: <Utensils className="w-4 h-4" />, label: 'O que comer hoje?', color: 'text-orange-600 bg-orange-50 border-orange-200' },
+    { icon: <Dumbbell className="w-4 h-4" />, label: 'Exercícios seguros', color: 'text-green-600 bg-green-50 border-green-200' },
+    { icon: <Baby className="w-4 h-4" />, label: 'Como está meu bebê?', color: 'text-pink-600 bg-pink-50 border-pink-200' },
+    { icon: <Moon className="w-4 h-4" />, label: 'Dicas para dormir melhor', color: 'text-indigo-600 bg-indigo-50 border-indigo-200' },
+    { icon: <Pill className="w-4 h-4" />, label: 'Vitaminas e suplementos', color: 'text-purple-600 bg-purple-50 border-purple-200' },
+    { icon: <Smile className="w-4 h-4" />, label: 'Preciso de apoio emocional', color: 'text-rose-600 bg-rose-50 border-rose-200' },
+  ]
 
-      {/* Sidebar Mobile */}
+  return (
+    <div className="flex h-[100dvh] bg-gray-50">
+      {/* Desktop Sidebar */}
+      {!sidebarCollapsed && (
+        <div className="hidden md:flex w-72 border-r bg-white flex-col">
+          <div className="p-3 border-b flex items-center justify-between">
+            <button onClick={createNewSession} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-primary-500 text-white rounded-xl hover:bg-primary-600 active:scale-[0.98] transition-all font-medium"><Plus className="w-4 h-4" /> Nova conversa</button>
+            <button onClick={() => setSidebarCollapsed(true)} className="ml-2 p-2 hover:bg-gray-100 rounded-xl"><ChevronLeft className="w-4 h-4" /></button>
+          </div>
+          <div className="px-2 py-2">
+            <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="Buscar conversas..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary-500 outline-none" /></div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+            {filteredSessions.length === 0 ? (
+              <p className="text-center text-gray-400 text-sm py-8">{searchQuery ? 'Nenhuma encontrada' : 'Nenhuma conversa ainda'}</p>
+            ) : filteredSessions.map(s => renderSessionItem(s))}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Sidebar Overlay */}
       {showMobileSidebar && (
         <>
-          <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => { setShowMobileSidebar(false); setMenuOpen(null) }} />
-          <div className="fixed inset-y-0 left-0 z-50 w-72 bg-white flex flex-col md:hidden">
+          <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowMobileSidebar(false)} />
+          <div className="fixed left-0 top-0 bottom-0 w-80 bg-white z-50 flex flex-col md:hidden animate-in slide-in-from-left duration-200">
             <div className="p-3 border-b flex items-center justify-between">
-              <h2 className="font-bold">Conversas</h2>
-              <button onClick={() => { setShowMobileSidebar(false); setMenuOpen(null) }} className="p-2 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5" /></button>
+              <button onClick={createNewSession} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-primary-500 text-white rounded-xl font-medium"><Plus className="w-4 h-4" /> Nova conversa</button>
+              <button onClick={() => setShowMobileSidebar(false)} className="ml-2 p-2 hover:bg-gray-100 rounded-xl"><X className="w-5 h-5" /></button>
             </div>
-            <div className="p-2">
-              <button onClick={createNewSession} className="w-full flex items-center justify-center gap-2 p-2.5 bg-primary-500 text-white rounded-xl font-medium"><Plus className="w-5 h-5" /> Nova Conversa</button>
-            </div>
-            <div className="px-2 pb-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input type="text" placeholder="Buscar..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary-500 outline-none" />
-              </div>
+            <div className="px-2 pb-2 pt-2">
+              <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="Buscar..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary-500 outline-none" /></div>
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-1">
               {filteredSessions.length === 0 ? (
@@ -336,7 +311,7 @@ export default function ChatPage() {
         </>
       )}
 
-      {/* Main */}
+      {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b px-4 py-3 flex items-center gap-3">
           <button onClick={() => setShowMobileSidebar(true)} className="p-2 hover:bg-gray-100 rounded-xl md:hidden"><Menu className="w-5 h-5" /></button>
@@ -344,55 +319,92 @@ export default function ChatPage() {
           <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl"><ArrowLeft className="w-5 h-5" /></Link>
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center"><Sparkles className="w-5 h-5 text-white" /></div>
-            <div><h1 className="font-semibold">Vita AI</h1><p className="text-xs text-gray-500">Sua assistente</p></div>
+            <div><h1 className="font-semibold">Vita AI</h1><p className="text-xs text-gray-500">Sua assistente de saúde materna</p></div>
           </div>
         </header>
 
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {loadingMessages ? (
             <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary-500" /></div>
           ) : messages.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center"><Sparkles className="w-8 h-8 text-white" /></div>
-              <h2 className="text-xl font-semibold mb-2">Olá! Sou a Vita 💜</h2>
-              <p className="text-gray-500 max-w-md mx-auto mb-6">Pergunte sobre alimentação, exercícios, gestação ou qualquer dúvida!</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg mx-auto">
-                {['O que posso comer na gestação?', 'Quais exercícios são seguros?', 'Como melhorar minha alimentação?', 'Dicas para mais energia'].map((s, i) => (
-                  <button key={i} onClick={() => { setInput(s); inputRef.current?.focus() }} className="p-3 text-left text-sm bg-white border rounded-xl hover:border-primary-300 hover:bg-primary-50 transition-colors">{s}</button>
+            <div className="text-center py-8">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/20">
+                <Sparkles className="w-10 h-10 text-white" />
+              </div>
+              <h2 className="text-xl font-bold mb-2">Olá! Sou a Vita 💜</h2>
+              <p className="text-gray-500 max-w-md mx-auto mb-6">Sua assistente especialista em saúde materna. Pergunte qualquer coisa!</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-w-xl mx-auto">
+                {quickTopics.map((topic, i) => (
+                  <button key={i} onClick={() => sendMessage(topic.label)} className={`p-3 text-left text-sm border rounded-xl hover:shadow-md transition-all active:scale-[0.98] flex items-center gap-2 ${topic.color}`}>
+                    {topic.icon}
+                    <span className="font-medium">{topic.label}</span>
+                  </button>
                 ))}
               </div>
             </div>
           ) : (
-            messages.map(msg => (
-              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                {msg.role === 'assistant' && (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
-                    <Sparkles className="w-3.5 h-3.5 text-white" />
+            <>
+              {messages.map(msg => (
+                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {msg.role === 'assistant' && (
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
+                      <Sparkles className="w-3.5 h-3.5 text-white" />
+                    </div>
+                  )}
+                  <div className={`max-w-[85%] sm:max-w-[75%] p-4 rounded-2xl ${msg.role === 'user' ? 'bg-primary-500 text-white rounded-br-md' : 'bg-white shadow-sm border rounded-bl-md'}`}>
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                   </div>
-                )}
-                <div className={`max-w-[80%] p-4 rounded-2xl ${msg.role === 'user' ? 'bg-primary-500 text-white rounded-br-md' : 'bg-white shadow-sm border rounded-bl-md'}`}>
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                 </div>
-              </div>
-            ))
+              ))}
+
+              {/* Suggestion chips after last message */}
+              {!loading && suggestions.length > 0 && (
+                <div className="flex flex-wrap gap-2 pl-9">
+                  {suggestions.map((s, i) => (
+                    <button key={i} onClick={() => handleSuggestionClick(s)} className="px-3 py-2 text-sm bg-white border border-primary-200 text-primary-700 rounded-xl hover:bg-primary-50 hover:border-primary-300 active:scale-[0.97] transition-all shadow-sm">
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
+
+          {/* Typing indicator */}
           {loading && (
             <div className="flex justify-start">
               <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
                 <Sparkles className="w-3.5 h-3.5 text-white" />
               </div>
-              <div className="bg-white shadow-sm border p-4 rounded-2xl rounded-bl-md flex items-center gap-2">
-                <Loader2 className="w-5 h-5 animate-spin text-primary-500" /><span className="text-sm text-gray-500">Pensando...</span>
+              <div className="bg-white shadow-sm border p-4 rounded-2xl rounded-bl-md">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <span className="text-sm text-gray-400 ml-2">Vita está pensando...</span>
+                </div>
               </div>
             </div>
           )}
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Input */}
         <div className="p-4 bg-white border-t">
           <div className="flex gap-2 max-w-4xl mx-auto">
-            <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()} placeholder="Digite sua mensagem..." className="flex-1 px-4 py-3 border rounded-xl focus:ring-2 focus:ring-primary-500 outline-none" />
-            <button onClick={sendMessage} disabled={loading || !input.trim()} className="px-4 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl disabled:opacity-50 transition-colors"><Send className="w-5 h-5" /></button>
+            <input 
+              ref={inputRef} 
+              type="text" 
+              value={input} 
+              onChange={(e) => setInput(e.target.value)} 
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()} 
+              placeholder="Pergunte sobre alimentação, exercícios, gravidez..." 
+              className="flex-1 px-4 py-3 border rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-sm" 
+            />
+            <button onClick={() => sendMessage()} disabled={loading || !input.trim()} className="px-4 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl disabled:opacity-50 transition-all active:scale-[0.95]">
+              <Send className="w-5 h-5" />
+            </button>
           </div>
         </div>
       </div>
