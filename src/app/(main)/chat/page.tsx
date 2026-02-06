@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { 
   ArrowLeft, Send, Sparkles, Loader2, Menu, Plus, MessageCircle, X,
-  MoreVertical, Edit2, Trash2, Check, ChevronLeft, ChevronRight, Search,
-  Heart, Utensils, Baby, Dumbbell, Moon, Pill, Smile
+  MoreVertical, Edit2, Trash2, Check, ChevronLeft, Search,
+  Utensils, Baby, Dumbbell, Moon, Pill, Smile, FileText
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -23,6 +23,100 @@ interface ChatSession {
   updated_at: string
 }
 
+// ============================================================
+// COMPONENTE DE MARKDOWN RENDERER
+// ============================================================
+function MarkdownRenderer({ content }: { content: string }) {
+  const rendered = useMemo(() => {
+    let html = content
+    
+    // Escapar HTML perigoso
+    html = html.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    
+    // Headers (### primeiro, ## depois, # por último)
+    html = html.replace(/^### (.+)$/gm, '<h3 class="text-base font-bold mt-4 mb-2 text-gray-800">$1</h3>')
+    html = html.replace(/^## (.+)$/gm, '<h2 class="text-lg font-bold mt-5 mb-2 text-gray-900">$1</h2>')
+    html = html.replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold mt-5 mb-3 text-gray-900">$1</h1>')
+    
+    // Tabelas - processar antes de outros elementos
+    html = html.replace(/(\|.+\|[\r\n]+\|[-\s|:]+\|[\r\n]+((\|.+\|[\r\n]*)+))/g, (match) => {
+      const lines = match.trim().split('\n').filter(line => line.trim())
+      if (lines.length < 3) return match
+      
+      const headerCells = lines[0].split('|').filter(c => c.trim()).map(c => c.trim())
+      // Skip separator line (lines[1])
+      const bodyRows = lines.slice(2)
+      
+      let table = '<div class="overflow-x-auto my-3"><table class="w-full text-sm border-collapse">'
+      table += '<thead><tr class="bg-primary-50 border-b-2 border-primary-200">'
+      headerCells.forEach(cell => {
+        table += `<th class="px-3 py-2 text-left font-semibold text-primary-800">${cell}</th>`
+      })
+      table += '</tr></thead><tbody>'
+      
+      bodyRows.forEach((row, idx) => {
+        const cells = row.split('|').filter(c => c.trim()).map(c => c.trim())
+        const bgClass = idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+        table += `<tr class="${bgClass} border-b border-gray-100">`
+        cells.forEach(cell => {
+          table += `<td class="px-3 py-2 text-gray-700">${cell}</td>`
+        })
+        table += '</tr>'
+      })
+      
+      table += '</tbody></table></div>'
+      return table
+    })
+    
+    // Bold (** e __)
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
+    html = html.replace(/__(.+?)__/g, '<strong class="font-semibold text-gray-900">$1</strong>')
+    
+    // Italic (* e _) - cuidado para não conflitar com listas
+    html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+    
+    // Listas com - 
+    html = html.replace(/^- (.+)$/gm, '<li class="ml-4 pl-2 py-0.5 text-gray-700 list-disc">$1</li>')
+    // Agrupar <li> consecutivos
+    html = html.replace(/((<li[^>]*>.*?<\/li>\s*)+)/g, '<ul class="my-2 space-y-0.5">$1</ul>')
+    
+    // Listas numeradas
+    html = html.replace(/^\d+\.\s+(.+)$/gm, '<li class="ml-4 pl-2 py-0.5 text-gray-700">$1</li>')
+    
+    // Listas com •
+    html = html.replace(/^[•●]\s*(.+)$/gm, '<li class="ml-4 pl-2 py-0.5 text-gray-700 list-disc">$1</li>')
+    
+    // Horizontal rule
+    html = html.replace(/^---$/gm, '<hr class="my-4 border-gray-200">')
+    
+    // Parágrafos - converter linhas duplas em breaks
+    html = html.replace(/\n\n/g, '</p><p class="mb-3 text-gray-700 leading-relaxed">')
+    html = html.replace(/\n/g, '<br>')
+    
+    // Wrap em parágrafo se não começa com tag
+    if (!html.startsWith('<')) {
+      html = `<p class="mb-3 text-gray-700 leading-relaxed">${html}</p>`
+    }
+    
+    // Limpar parágrafos vazios
+    html = html.replace(/<p[^>]*>\s*<\/p>/g, '')
+    html = html.replace(/<p[^>]*>\s*<br>\s*<\/p>/g, '')
+    
+    return html
+  }, [content])
+  
+  return (
+    <div 
+      className="prose prose-sm max-w-none markdown-content"
+      dangerouslySetInnerHTML={{ __html: rendered }}
+    />
+  )
+}
+
+
+// ============================================================
+// COMPONENTE PRINCIPAL DO CHAT
+// ============================================================
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -37,11 +131,14 @@ export default function ChatPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
+  const [provider, setProvider] = useState<string>('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { loadSessions() }, [])
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, suggestions])
+  useEffect(() => { 
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+  }, [messages, suggestions])
   useEffect(() => {
     const handleClick = () => setMenuOpen(null)
     if (menuOpen) {
@@ -183,7 +280,7 @@ export default function ChatPage() {
         body: JSON.stringify({ 
           message: userMessage, 
           sessionId,
-          history: messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
+          history: messages.slice(-15).map(m => ({ role: m.role, content: m.content }))
         })
       })
 
@@ -195,6 +292,7 @@ export default function ChatPage() {
         id: 'ai-' + Date.now(), role: 'assistant', content: aiContent, created_at: new Date().toISOString(), suggestions: aiSuggestions
       }])
       setSuggestions(aiSuggestions)
+      setProvider(data.provider || '')
 
       if (sessionId) {
         const { data: session } = await supabase.from('chat_sessions').select('messages').eq('id', sessionId).single()
@@ -235,7 +333,7 @@ export default function ChatPage() {
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
 
-  const renderSessionItem = (s: ChatSession, isMobile = false) => (
+  const renderSessionItem = (s: ChatSession) => (
     <div key={s.id} onClick={() => loadMessages(s.id)} className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all ${currentSession === s.id ? 'bg-primary-50 border border-primary-200' : 'hover:bg-gray-50'}`}>
       <MessageCircle className={`w-4 h-4 flex-shrink-0 ${currentSession === s.id ? 'text-primary-500' : 'text-gray-400'}`} />
       <div className="flex-1 min-w-0">
@@ -260,10 +358,9 @@ export default function ChatPage() {
     </div>
   )
 
-  // Quick topic buttons for welcome screen
   const quickTopics = [
-    { icon: <Utensils className="w-4 h-4" />, label: 'O que comer hoje?', color: 'text-orange-600 bg-orange-50 border-orange-200' },
-    { icon: <Dumbbell className="w-4 h-4" />, label: 'Exercícios seguros', color: 'text-green-600 bg-green-50 border-green-200' },
+    { icon: <Utensils className="w-4 h-4" />, label: 'Monte um plano alimentar completo', color: 'text-orange-600 bg-orange-50 border-orange-200' },
+    { icon: <Dumbbell className="w-4 h-4" />, label: 'Crie um treino personalizado', color: 'text-green-600 bg-green-50 border-green-200' },
     { icon: <Baby className="w-4 h-4" />, label: 'Como está meu bebê?', color: 'text-pink-600 bg-pink-50 border-pink-200' },
     { icon: <Moon className="w-4 h-4" />, label: 'Dicas para dormir melhor', color: 'text-indigo-600 bg-indigo-50 border-indigo-200' },
     { icon: <Pill className="w-4 h-4" />, label: 'Vitaminas e suplementos', color: 'text-purple-600 bg-purple-50 border-purple-200' },
@@ -272,6 +369,40 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[100dvh] bg-gray-50">
+      {/* Estilos globais para markdown */}
+      <style jsx global>{`
+        .markdown-content h1, .markdown-content h2, .markdown-content h3 {
+          color: #1a1a2e;
+        }
+        .markdown-content table {
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          overflow: hidden;
+        }
+        .markdown-content th {
+          font-size: 0.8rem;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .markdown-content ul {
+          list-style-type: disc;
+          padding-left: 1.2rem;
+        }
+        .markdown-content li {
+          margin-bottom: 0.15rem;
+        }
+        .markdown-content strong {
+          color: #1a1a2e;
+        }
+        .markdown-content p {
+          margin-bottom: 0.5rem;
+          line-height: 1.65;
+        }
+        .markdown-content p:last-child {
+          margin-bottom: 0;
+        }
+      `}</style>
+
       {/* Desktop Sidebar */}
       {!sidebarCollapsed && (
         <div className="hidden md:flex w-72 border-r bg-white flex-col">
@@ -305,7 +436,7 @@ export default function ChatPage() {
             <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-1">
               {filteredSessions.length === 0 ? (
                 <p className="text-center text-gray-400 text-sm py-8">{searchQuery ? 'Nenhuma encontrada' : 'Nenhuma conversa'}</p>
-              ) : filteredSessions.map(s => renderSessionItem(s, true))}
+              ) : filteredSessions.map(s => renderSessionItem(s))}
             </div>
           </div>
         </>
@@ -319,12 +450,18 @@ export default function ChatPage() {
           <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-xl"><ArrowLeft className="w-5 h-5" /></Link>
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center"><Sparkles className="w-5 h-5 text-white" /></div>
-            <div><h1 className="font-semibold">Vita AI</h1><p className="text-xs text-gray-500">Sua assistente de saúde materna</p></div>
+            <div>
+              <h1 className="font-semibold">Vita AI</h1>
+              <p className="text-xs text-gray-500">
+                Sua assistente de saúde materna
+                {provider && <span className="ml-1 text-gray-300">• {provider === 'groq' ? '⚡' : provider === 'gemini' ? '✨' : provider === 'local' ? '💜' : ''}</span>}
+              </p>
+            </div>
           </div>
         </header>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-5">
           {loadingMessages ? (
             <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary-500" /></div>
           ) : messages.length === 0 ? (
@@ -333,7 +470,7 @@ export default function ChatPage() {
                 <Sparkles className="w-10 h-10 text-white" />
               </div>
               <h2 className="text-xl font-bold mb-2">Olá! Sou a Vita 💜</h2>
-              <p className="text-gray-500 max-w-md mx-auto mb-6">Sua assistente especialista em saúde materna. Pergunte qualquer coisa!</p>
+              <p className="text-gray-500 max-w-md mx-auto mb-6">Sua assistente especialista em saúde materna. Respostas completas e detalhadas como uma profissional.</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-w-xl mx-auto">
                 {quickTopics.map((topic, i) => (
                   <button key={i} onClick={() => sendMessage(topic.label)} className={`p-3 text-left text-sm border rounded-xl hover:shadow-md transition-all active:scale-[0.98] flex items-center gap-2 ${topic.color}`}>
@@ -348,19 +485,25 @@ export default function ChatPage() {
               {messages.map(msg => (
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' && (
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
-                      <Sparkles className="w-3.5 h-3.5 text-white" />
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mr-3 mt-1 flex-shrink-0">
+                      <Sparkles className="w-4 h-4 text-white" />
                     </div>
                   )}
-                  <div className={`max-w-[85%] sm:max-w-[75%] p-4 rounded-2xl ${msg.role === 'user' ? 'bg-primary-500 text-white rounded-br-md' : 'bg-white shadow-sm border rounded-bl-md'}`}>
-                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                  <div className={`${msg.role === 'user' 
+                    ? 'max-w-[85%] sm:max-w-[70%] px-4 py-3 bg-primary-500 text-white rounded-2xl rounded-br-md' 
+                    : 'max-w-[90%] sm:max-w-[80%] px-5 py-4 bg-white shadow-sm border rounded-2xl rounded-bl-md'}`}>
+                    {msg.role === 'user' ? (
+                      <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    ) : (
+                      <MarkdownRenderer content={msg.content} />
+                    )}
                   </div>
                 </div>
               ))}
 
-              {/* Suggestion chips after last message */}
+              {/* Suggestion chips */}
               {!loading && suggestions.length > 0 && (
-                <div className="flex flex-wrap gap-2 pl-9">
+                <div className="flex flex-wrap gap-2 pl-11">
                   {suggestions.map((s, i) => (
                     <button key={i} onClick={() => handleSuggestionClick(s)} className="px-3 py-2 text-sm bg-white border border-primary-200 text-primary-700 rounded-xl hover:bg-primary-50 hover:border-primary-300 active:scale-[0.97] transition-all shadow-sm">
                       {s}
@@ -374,15 +517,17 @@ export default function ChatPage() {
           {/* Typing indicator */}
           {loading && (
             <div className="flex justify-start">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
-                <Sparkles className="w-3.5 h-3.5 text-white" />
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center mr-3 mt-1 flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <div className="bg-white shadow-sm border p-4 rounded-2xl rounded-bl-md">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-                  <span className="text-sm text-gray-400 ml-2">Vita está pensando...</span>
+              <div className="bg-white shadow-sm border px-5 py-4 rounded-2xl rounded-bl-md">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 rounded-full bg-primary-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-sm text-gray-400">Vita está elaborando uma resposta completa...</span>
                 </div>
               </div>
             </div>
@@ -406,6 +551,7 @@ export default function ChatPage() {
               <Send className="w-5 h-5" />
             </button>
           </div>
+          <p className="text-center text-xs text-gray-400 mt-2">Vita é uma IA e pode cometer erros. Por favor, verifique as respostas.</p>
         </div>
       </div>
     </div>
