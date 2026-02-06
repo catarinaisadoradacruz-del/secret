@@ -139,7 +139,7 @@ async function loadRecentSessionContext(supabase: any, userId: string, currentSe
     
     if (!data || data.length === 0) return []
     
-    return data.map(session => {
+    return data.map((session: { title: string; messages: { role: string; content: string }[]; updated_at: string }) => {
       const msgs = session.messages || []
       const lastMsgs = msgs.slice(-4)
       const summary = lastMsgs.map((m: { role: string; content: string }) => 
